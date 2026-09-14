@@ -6,12 +6,18 @@
   const TIERS_DESC = ['mythic', 'anomaly', 'epic', 'rare', 'uncommon', 'common', 'trash'];
   const TIER_RANK = { trash: 0, common: 1, uncommon: 2, rare: 3, epic: 4, anomaly: 5, mythic: 6 };
   const TIER_EMOJI = { trash: '🟫', common: '⬜', uncommon: '🟩', rare: '🟦', epic: '🟪', anomaly: '🟧', mythic: '🟥' };
-  const SPEEDS = {
-    dramatic: { start: 1400, digitMin: 800, digitMax: 1500, lastExtra: 1400, badgeStagger: 140, epTick: 1500 },
-    normal: { start: 450, digitMin: 260, digitMax: 520, lastExtra: 550, badgeStagger: 60, epTick: 900 },
-    fast: { start: 120, digitMin: 70, digitMax: 130, lastExtra: 120, badgeStagger: 20, epTick: 350 },
-    instant: { start: 0, digitMin: 0, digitMax: 0, lastExtra: 0, badgeStagger: 0, epTick: 0 },
+  // Rythme de révélation du site d'origine (ms). Chaque vitesse applique un facteur à toutes ces durées.
+  const REVEAL = {
+    digitStart: 2000, digitBase: 1000, digitMax: 2000,
+    badgeStart: 1000, badgeBase: 500, badgeMax: 1500, badgeEp: 500,
+    summary: 1500, rarity: 1000, stats: 250, lifetimeShow: 1000, lifetimePause: 1500, lifetimeTick: 1500, end: 500,
   };
+  const SPEEDS = { dramatic: 1, normal: 0.6, fast: 0.25, instant: 0 };
+  const SPEED_LABELS = { dramatic: 'original', normal: 'normal', fast: 'fast', instant: 'instant' };
+  // Chaque chiffre suivant se fait attendre un peu plus ; idem pour les badges, jusqu'au plus rare.
+  const digitDelay = (i, count) => REVEAL.digitBase + (REVEAL.digitMax - REVEAL.digitBase) * Math.pow(i / (count - 1), 2);
+  const badgeDelay = (i, count) => (count <= 1 ? REVEAL.badgeBase
+    : REVEAL.badgeBase + (REVEAL.badgeMax - REVEAL.badgeBase) * Math.pow(i / (count - 1), 1.5));
   const GROUP_COLORS = [['#93c5fd', '#2563eb'], ['#c4b5fd', '#7c3aed'], ['#fdba74', '#ea580c'], ['#f9a8d4', '#db2777'], ['#fcd34d', '#b45309'], ['#86efac', '#15803d']];
   const LABELS = new Map(Engine.badges.map(b => [b.id, b.label.toLowerCase()]));
 
@@ -175,7 +181,7 @@
         ${opts.newIds && opts.newIds.has(sb.id) ? '<span class="new-tag">NEW</span>' : ''}
         <span class="earned">(earned)</span>
       </div>`).join('');
-    return `
+    return `<div class="badge-group">
       <div class="badge-card${anim}" data-tier="${b.tier}"${delay}>
         <div class="badge-head">
           <div class="badge-title">
@@ -189,7 +195,7 @@
         <div class="badge-desc">${esc(b.desc)}</div>
         ${detail ? `<div class="badge-extra">${esc(detail)}</div>` : ''}
         <div class="digits">${digitTiles(n, b.id)}</div>
-      </div>${subs}`;
+      </div>${subs}</div>`;
   }
 
   function breakdownHTML(n, a, opts = {}) {
@@ -300,11 +306,13 @@
     return { celebrate, clear };
   })();
 
+  // Un nouveau countUp sur le même élément annule le précédent.
   function countUp(el, from, to, duration, format) {
+    const token = (el._countToken = (el._countToken || 0) + 1);
     if (!duration || reducedMotion) { el.textContent = format(to); return; }
     const t0 = performance.now();
     const step = now => {
-      if (!el.isConnected) return;
+      if (!el.isConnected || el._countToken !== token) return;
       const k = Math.min(1, (now - t0) / duration);
       const eased = 1 - Math.pow(1 - k, 3);
       el.textContent = format(from + (to - from) * eased);
@@ -401,7 +409,7 @@
 
   function openSettings() {
     const s = Store.settings;
-    const seg = (name, options, value) => `<div class="seg" data-seg="${name}">${options.map(o => `<button data-v="${o}" class="${o === value ? 'on' : ''}">${o}</button>`).join('')}</div>`;
+    const seg = (name, options, value, labels = {}) => `<div class="seg" data-seg="${name}">${options.map(o => `<button data-v="${o}" class="${o === value ? 'on' : ''}">${labels[o] || o}</button>`).join('')}</div>`;
     openModal(`
       <h2>Player & settings</h2>
       <div class="field">
@@ -409,7 +417,7 @@
         <input class="input" id="set-name" maxlength="20" autocomplete="off" value="${esc(Store.player.name)}" placeholder="Player">
         <span class="panel-note">Used on the leaderboard once it goes online.</span>
       </div>
-      <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal', 'fast', 'instant'], s.speed)}</div>
+      <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal', 'fast', 'instant'], s.speed, SPEED_LABELS)}</div>
       <div class="field"><label>Theme</label>${seg('theme', ['light', 'system', 'dark'], s.theme)}</div>
       <div class="danger-zone">
         <button class="btn" id="set-export">Export history</button>
@@ -521,8 +529,12 @@
   }
 
   // ---------------------------------------------------------------- tirage
-  function startRoll() {
-    if (session && !session.finished) { session.skip(); return; }
+  // Pendant la révélation, Espace saute l'animation ; une fois la rareté affichée, il relance.
+  function startRoll(force) {
+    if (session && !session.finished) {
+      if (force !== true && !session.canReroll) { session.skip(); return; }
+      session.cancel();
+    }
     closeModal();
     Collection.ensure();
     const n = Engine.roll();
@@ -539,119 +551,151 @@
     session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index });
   }
 
+  function notesHTML(ctx, a) {
+    const notes = [];
+    if (ctx.isFirst) notes.push('<p class="new-note">First roll on this device — welcome!</p>');
+    if (ctx.newIds && ctx.newIds.size) {
+      const list = [...ctx.newIds].map(id => Engine.byId.get(id)).sort((x, y) => y.score - x.score);
+      notes.push(`<p class="new-note">✨ ${plural(list.length, 'new badge')}: ${list.slice(0, 4).map(b => `${b.emoji} ${esc(b.label)}`).join(', ')}${list.length > 4 ? '…' : ''}</p>`);
+    }
+    if (ctx.previous.length) {
+      const lastIdx = ctx.previous[ctx.previous.length - 1];
+      notes.push(`<p class="repeat-note">You've rolled <b class="mono">${a.str}</b> before — ${ctx.previous.length}× (last ${relTime(Store.rolls[lastIdx][2])}, <a href="javascript:void 0" data-roll="${lastIdx}">#${fmt(lastIdx + 1)}</a>)</p>`);
+    }
+    return notes.join('');
+  }
+
+  // Révélation en étapes chronométrées, comme l'original :
+  // chiffres → badges un par un (EP qui monte) → compteur de badges → rareté → TOP x % → EP à vie.
+  // Chaque étape est idempotente : "skip" exécute d'un coup celles qui restent, sans animation.
   function playReveal(ctx) {
     currentView = 'result';
     const { n, a } = ctx;
-    const cfg = SPEEDS[Store.settings.speed] || SPEEDS.normal;
+    const k = SPEEDS[Store.settings.speed] ?? SPEEDS.normal;
     const slotCount = Math.max(6, a.str.length);
     const padded = a.str.padStart(slotCount, '0');
     const lead = slotCount - a.str.length;
+    const top = Engine.topLabel(a.percentile);
+    const ascending = a.groups.slice().reverse();
 
     app.innerHTML = `
+      <div class="vignette" id="r-vignette"></div>
       <div class="page">
         <section class="result" data-tier="${a.tier}">
-          <div class="num-card lg neutral rolling" id="num-card" title="Click to skip">
+          <div class="num-card lg neutral charging" id="num-card" title="Click to skip">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
           </div>
-          <div class="result-meta" id="r-meta"></div>
+          <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}${top ? `<span class="dot">•</span><span class="top">${top}</span>` : ''}</div>
           <div class="ep-big pending" id="r-ep">??? EP</div>
-          <div class="lifetime" id="r-life" hidden>
-            <div><span class="v" id="r-life-v">${fmt(ctx.lifetimeBefore)}</span><span class="delta">+${fmt(a.total)}</span></div>
+          <div class="lifetime invisible" id="r-life">
+            <div class="lifetime-row"><span class="v" id="r-life-v">${fmt(ctx.lifetimeBefore)}</span><span class="delta" id="r-life-delta" hidden>+${fmt(a.total)}</span></div>
             <div class="l">Your lifetime EP</div>
           </div>
-          <div class="result-actions" id="r-actions" hidden>
+          <div class="result-actions invisible" id="r-actions">
             <button class="btn" id="r-share">${shareIcon()} Share</button>
             <button class="btn-roll small" id="r-again">Roll again</button>
           </div>
+          <p class="hint" id="r-hint">click the number or press <kbd>Space</kbd> to skip</p>
           <div id="r-notes" style="text-align:center"></div>
-          <div id="r-breakdown" style="width:100%;display:flex;justify-content:center"></div>
+          <section class="breakdown" id="r-breakdown" hidden>
+            <h2 class="section-title">Badge breakdown</h2>
+            <div class="section-sub invisible" id="r-count">${plural(a.earnedIds.length, 'badge')} earned</div>
+            <div class="list" id="r-list"></div>
+          </section>
         </section>
       </div>`;
 
     const card = $('#num-card');
     const slots = Array.from(card.querySelectorAll('.slot'));
+    const ep = $('#r-ep');
+    const vignette = $('#r-vignette');
+    const steps = [];
     const timers = [];
-    let revealed = 0;
-    let finished = false;
+    let clock = 0, revealed = 0, running = 0, finished = false, canReroll = false;
+    const step = (delay, run) => { clock += delay * k; steps.push({ at: clock, run, done: false }); };
+    const show = (el, cls) => { el.classList.remove('invisible'); if (cls && !reducedMotion) el.classList.add(cls); };
 
     const spin = setInterval(() => {
       for (let i = revealed; i < slotCount; i++) slots[i].textContent = String((Math.random() * 10) | 0);
     }, 55);
+    requestAnimationFrame(() => vignette.classList.add('on'));
 
-    const schedule = (fn, ms) => timers.push(setTimeout(fn, ms));
-    const delayFor = i => {
-      const d = cfg.digitMin + Math.random() * (cfg.digitMax - cfg.digitMin);
-      return i === slotCount - 1 ? d + cfg.lastExtra : d;
-    };
-    function setSlot(i) {
+    // 1. Chiffres de gauche à droite, chacun un peu plus lent que le précédent.
+    const revealDigit = i => () => {
       const el = slots[i];
       el.textContent = padded[i];
       el.classList.remove('spinning');
       el.classList.add('revealed');
       if (i < lead) el.classList.add('ghost');
-    }
-    function revealNext() {
-      setSlot(revealed);
-      revealed++;
-      if (revealed === slotCount) finish(false);
-      else schedule(revealNext, delayFor(revealed));
-    }
+      revealed = i + 1;
+    };
+    step(REVEAL.digitStart, revealDigit(0));
+    for (let i = 1; i < slotCount; i++) step(digitDelay(i - 1, slotCount), revealDigit(i));
+    step(0, quick => {
+      clearInterval(spin);
+      card.classList.remove('charging');
+      if (!lead) return;
+      const collapse = () => slots.slice(0, lead).forEach(el => el.classList.add('collapsed'));
+      if (quick) collapse(); else setTimeout(collapse, 260);
+    });
+
+    // 2. Badges un par un, du moins rare au plus rare : chacun s'insère en haut et fait monter l'EP.
+    ascending.forEach((g, i) => {
+      step(i === 0 ? REVEAL.badgeStart : badgeDelay(i - 1, ascending.length), quick => {
+        $('#r-breakdown').hidden = false;
+        $('#r-list').insertAdjacentHTML('afterbegin', badgeCardHTML(g, n, { newIds: ctx.newIds, animate: !quick && !reducedMotion, delay: 0 }));
+        const from = running;
+        running += g.badge.score;
+        countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * k, v => `${fmt(v)} EP`);
+      });
+    });
+
+    // 3. Résumé, rareté, TOP x %, EP à vie.
+    step(REVEAL.summary, () => {
+      show($('#r-count'), 'fade-in');
+      $('#r-notes').innerHTML = notesHTML(ctx, a);
+    });
+    step(REVEAL.rarity, () => {
+      card.classList.remove('neutral');
+      card.removeAttribute('title');
+      if (!reducedMotion) card.classList.add(a.tier === 'anomaly' || a.tier === 'mythic' ? 'shake' : 'reveal-pulse');
+      ep.classList.remove('pending');
+      countUp(ep, 0, a.total, 0, v => `${fmt(v)} EP`);
+      FX.celebrate(a.tier, card);
+      show($('#r-actions'), 'fade-in');
+      $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
+      canReroll = true;
+    });
+    step(REVEAL.stats, () => show($('#r-meta'), 'pop-in'));
+    step(REVEAL.lifetimeShow, () => show($('#r-life'), 'fade-in'));
+    step(REVEAL.lifetimePause, quick => {
+      const delta = $('#r-life-delta');
+      delta.hidden = false;
+      if (!quick && !reducedMotion) delta.classList.add('float-up');
+      countUp($('#r-life-v'), ctx.lifetimeBefore, ctx.lifetimeBefore + a.total, quick ? 0 : REVEAL.lifetimeTick * k, fmt);
+    });
+    step(REVEAL.lifetimeTick + REVEAL.end, () => {
+      vignette.classList.remove('on');
+      finished = true;
+    });
+
+    const runStep = (s, quick) => { if (!s.done) { s.done = true; s.run(quick); } };
     function skip() {
       if (finished) return;
       timers.forEach(clearTimeout);
-      for (let i = revealed; i < slotCount; i++) setSlot(i);
-      revealed = slotCount;
-      finish(true);
-    }
-    function finish(skipped) {
-      finished = true;
-      clearInterval(spin);
-      const quick = skipped || cfg.start === 0;
-      if (lead) {
-        const collapse = () => slots.slice(0, lead).forEach(el => el.classList.add('collapsed'));
-        if (quick) collapse(); else setTimeout(collapse, 260);
-      }
-      card.classList.remove('neutral', 'rolling');
-      card.removeAttribute('title');
-      if ((a.tier === 'anomaly' || a.tier === 'mythic') && !reducedMotion) card.classList.add('shake');
-      FX.celebrate(a.tier, card);
-
-      const top = Engine.topLabel(a.percentile);
-      const meta = $('#r-meta');
-      meta.innerHTML = `${tierPill(a.tier)}${top ? `<span class="dot">•</span><span class="top">${top}</span>` : ''}`;
-      meta.classList.add('fade-in');
-
-      const ep = $('#r-ep');
-      ep.classList.remove('pending');
-      countUp(ep, 0, a.total, cfg.epTick, v => `${fmt(v)} EP`);
-      $('#r-life').hidden = false;
-      countUp($('#r-life-v'), ctx.lifetimeBefore, ctx.lifetimeBefore + a.total, cfg.epTick, fmt);
-
-      $('#r-actions').hidden = false;
-      $('#r-share').addEventListener('click', () => share(a));
-      $('#r-again').addEventListener('click', startRoll);
-
-      const notes = [];
-      if (ctx.isFirst) notes.push('<p class="new-note">First roll on this device — welcome!</p>');
-      if (ctx.newIds && ctx.newIds.size) {
-        const list = [...ctx.newIds].map(id => Engine.byId.get(id)).sort((x, y) => y.score - x.score);
-        notes.push(`<p class="new-note">✨ ${plural(list.length, 'new badge')}: ${list.slice(0, 4).map(b => `${b.emoji} ${esc(b.label)}`).join(', ')}${list.length > 4 ? '…' : ''}</p>`);
-      }
-      if (ctx.previous.length) {
-        const last = Store.rolls[ctx.previous[ctx.previous.length - 1]];
-        notes.push(`<p class="repeat-note">You've rolled <b class="mono">${a.str}</b> before — ${ctx.previous.length}× (last ${relTime(last[2])}, <a href="javascript:void 0" data-roll="${ctx.previous[ctx.previous.length - 1]}">#${fmt(ctx.previous[ctx.previous.length - 1] + 1)}</a>)</p>`);
-      }
-      notes.push('<p class="hint" style="margin-top:.8rem"><kbd>Space</kbd> to roll again · click a badge name for details</p>');
-      $('#r-notes').innerHTML = notes.join('');
-
-      $('#r-breakdown').innerHTML = breakdownHTML(n, a, { newIds: ctx.newIds, animate: !reducedMotion, stagger: quick ? Math.min(cfg.badgeStagger, 20) : cfg.badgeStagger });
+      steps.forEach(s => runStep(s, true));
     }
 
     card.addEventListener('click', skip);
-    if (cfg.start === 0) skip(); else schedule(revealNext, cfg.start);
+    $('#r-share').addEventListener('click', () => share(a));
+    $('#r-again').addEventListener('click', () => startRoll(true));
+
+    if (k === 0) skip();
+    else steps.forEach(s => timers.push(setTimeout(() => runStep(s, false), s.at)));
 
     return {
       get finished() { return finished; },
+      get canReroll() { return canReroll; },
       skip,
       cancel() { timers.forEach(clearTimeout); clearInterval(spin); finished = true; },
     };
