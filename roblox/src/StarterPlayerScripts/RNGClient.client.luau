@@ -625,20 +625,22 @@ local function shake(card)
 end
 
 ---------------------------------------------------------------------- fenêtre modale
-local modal = tbutton({ Name = "Modal", Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 0.4, Text = "", Visible = false, ZIndex = 40, Parent = root })
+-- Fond cliquable (ferme) et carte séparés : un clic dans la carte ne doit pas remonter jusqu'au fond.
+local modal = frame({ Name = "Modal", Size = UDim2.fromScale(1, 1), Visible = false, ZIndex = 40, Parent = root })
+local backdrop = tbutton({ Name = "Backdrop", Size = UDim2.fromScale(1, 1), BackgroundColor3 = BLACK, BackgroundTransparency = 0.4, Text = "", Parent = modal })
 local function closeModal()
 	for _, c in modal:GetChildren() do
-		c:Destroy()
+		if c ~= backdrop then c:Destroy() end
 	end
 	modal.Visible = false
 end
-modal.Activated:Connect(closeModal)
+backdrop.Activated:Connect(closeModal)
 
 local function openModal(build)
 	closeModal()
-	local card = frame({
-		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.new(1, -32, 0.84, 0),
-		BackgroundColor3 = Theme.surfaceDim, BackgroundTransparency = 0, Active = true, Parent = modal,
+	local card = tbutton({
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.52), Size = UDim2.new(1, -32, 0.84, 0), Text = "",
+		BackgroundColor3 = Theme.surfaceDim, BackgroundTransparency = 0, Parent = modal,
 	}, { corner(12), stroke(Theme.outline), new("UISizeConstraint", { MaxSize = Vector2.new(540, 760) }) })
 	local close = tbutton({ AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -10, 0, 10), Size = UDim2.fromOffset(32, 32), Text = "✕", TextSize = 16, TextColor3 = Theme.prose2, ZIndex = 2, Parent = card })
 	close.Activated:Connect(closeModal)
