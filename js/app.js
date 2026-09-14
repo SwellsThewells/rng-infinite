@@ -540,10 +540,10 @@
   }
 
   // ---------------------------------------------------------------- tirage
-  // Pendant la révélation, Espace saute l'animation ; une fois la rareté affichée, il relance.
+  // Rien ne se saute : pendant la révélation, Espace est ignoré ; une fois la rareté affichée, il relance.
   function startRoll(force) {
     if (session && !session.finished) {
-      if (force !== true && !session.canReroll) { session.skip(); return; }
+      if (force !== true && !session.canReroll) return;
       session.cancel();
     }
     closeModal();
@@ -578,7 +578,7 @@
 
   // Révélation en étapes chronométrées, comme l'original :
   // chiffres → badges un par un (EP qui monte) → compteur de badges → rareté → TOP x % → EP à vie.
-  // Chaque étape est idempotente : "skip" exécute d'un coup celles qui restent, sans animation.
+  // Rien ne peut être sauté ; le menu reste verrouillé jusqu'à l'affichage de la rareté.
   function playReveal(ctx) {
     currentView = 'result';
     const { n, a } = ctx;
@@ -606,8 +606,7 @@
             <button class="btn" id="r-share">${shareIcon()} Share</button>
             <button class="btn-roll small" id="r-again">Roll again</button>
           </div>
-          <p class="hint invisible" id="r-hint">press <kbd>Space</kbd> or click the number to skip the badges</p>
-          <button class="btn-roll small skip-fab" id="r-skip" hidden>Skip badges ⏭</button>
+          <p class="hint invisible" id="r-hint"></p>
           <div id="r-notes" style="text-align:center"></div>
           <section class="breakdown" id="r-breakdown" hidden>
             <h2 class="section-title">Badge breakdown</h2>
@@ -623,7 +622,7 @@
     const vignette = $('#r-vignette');
     const steps = [];
     const timers = [];
-    let clock = 0, revealed = 0, running = 0, finished = false, canReroll = false, digitsDone = false;
+    let clock = 0, revealed = 0, running = 0, finished = false, canReroll = false;
     const step = (delay, run, factor = k) => { clock += delay * factor; steps.push({ at: clock, run, done: false }); };
     const show = (el, cls) => { el.classList.remove('invisible'); if (cls && !reducedMotion) el.classList.add(cls); };
 
@@ -631,7 +630,7 @@
       for (let i = revealed; i < slotCount; i++) slots[i].textContent = String((Math.random() * 10) | 0);
     }, 55);
     requestAnimationFrame(() => vignette.classList.add('on'));
-    // Menu verrouillé tant que les chiffres tournent : on ne peut pas voir le nombre ailleurs avant la fin.
+    // Menu verrouillé pendant la révélation : on ne peut pas aller voir le résultat ailleurs avant la fin.
     document.body.classList.add('locked');
 
     // 1. Chiffres de gauche à droite, chacun un peu plus lent que le précédent.
@@ -648,10 +647,6 @@
     step(0, quick => {
       clearInterval(spin);
       card.classList.remove('charging');
-      digitsDone = true;
-      document.body.classList.remove('locked');
-      show($('#r-hint'), 'fade-in');
-      $('#r-skip').hidden = false;
       if (!lead) return;
       const collapse = () => slots.slice(0, lead).forEach(el => el.classList.add('collapsed'));
       if (quick) collapse(); else setTimeout(collapse, 260);
@@ -682,8 +677,9 @@
       FX.celebrate(a.tier, card);
       show($('#r-actions'), 'fade-in');
       $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
+      show($('#r-hint'), 'fade-in');
+      document.body.classList.remove('locked');
       canReroll = true;
-      $('#r-skip').hidden = true;
     });
     step(REVEAL.stats, () => show($('#r-meta'), 'pop-in'));
     step(REVEAL.lifetimeShow, () => show($('#r-life'), 'fade-in'));
@@ -698,16 +694,7 @@
       finished = true;
     });
 
-    const runStep = (s, quick) => { if (!s.done) { s.done = true; s.run(quick); } };
-    // Accélère uniquement ce qui suit les chiffres.
-    function skip() {
-      if (finished || !digitsDone) return;
-      timers.forEach(clearTimeout);
-      steps.forEach(s => runStep(s, true));
-    }
-
-    card.addEventListener('click', skip);
-    $('#r-skip').addEventListener('click', skip);
+    const runStep = s => { if (!s.done) { s.done = true; s.run(false); } };
     $('#r-share').addEventListener('click', () => share(a));
     $('#r-again').addEventListener('click', () => startRoll(true));
 
@@ -716,7 +703,6 @@
     return {
       get finished() { return finished; },
       get canReroll() { return canReroll; },
-      skip,
       cancel() { timers.forEach(clearTimeout); clearInterval(spin); finished = true; document.body.classList.remove('locked'); },
     };
   }

@@ -452,19 +452,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .float-up { animation: floatup 1.8s ease-out both; }
 @keyframes floatup { 0% { opacity: 0; transform: translateY(4px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
 .badge-group { display: flex; flex-direction: column; gap: .35rem; }
-body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacity: .45; }
-/* Centré par marges (pas de transform : l'animation d'apparition l'écraserait). */
-.skip-fab {
-  position: fixed;
-  left: 0;
-  right: 0;
-  bottom: 1.2rem;
-  z-index: 30;
-  width: max-content;
-  margin: 0 auto;
-  animation: ring-cycle 14s linear infinite, fadein .3s ease both;
-}
-@media (prefers-reduced-motion: reduce) {
+body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacity: .45; }@media (prefers-reduced-motion: reduce) {
   .num-card.charging, .num-card.reveal-pulse, .pop-in, .float-up { animation: none; }
   .vignette { transition: none; }
 }
