@@ -153,25 +153,28 @@
     }).join('');
   }
 
-  // Allume les chiffres un par un, puis toutes les ~4 s les éteint en vague et les rallume, tant que la carte est affichée.
-  function animateDigits(root, stagger = 0) {
+  // Boucle sur chaque rangée de chiffres : allumage en vague (avec un petit pop), maintien, extinction en vague, pause.
+  // S'arrête d'elle-même quand la carte quitte la page.
+  const DIGIT_HOLD_MS = 1800;
+  const DIGIT_REST_MS = 400;
+  function animateDigits(root, { start = 100, stagger = 0 } = {}) {
     root.querySelectorAll('.digits:not([data-animated])').forEach((box, index) => {
       box.dataset.animated = '1';
       const tiles = Array.from(box.querySelectorAll('.dt.hl'));
       if (!tiles.length) return;
       if (reducedMotion) { tiles.forEach(t => t.classList.add('lit')); return; }
+      tiles.forEach(t => { t.style.transitionDelay = t.style.animationDelay = t.dataset.delay + 'ms'; });
       const span = Math.max(...tiles.map(t => Number(t.dataset.delay)));
-      const set = (on, duration) => tiles.forEach(t => {
-        t.style.transitionDuration = duration + 'ms';
-        t.style.transitionDelay = t.dataset.delay + 'ms';
-        t.classList.toggle('lit', on);
-      });
       const later = (fn, ms) => setTimeout(() => { if (box.isConnected) fn(); }, ms);
-      const cycle = () => {
-        set(false, 400);
-        later(() => { set(true, 400); later(cycle, span + 400 + 4000); }, span + 400 + 100);
+      const lightUp = () => {
+        tiles.forEach(t => { t.style.transitionDuration = '250ms'; t.classList.add('lit'); });
+        later(fadeOut, span + 250 + DIGIT_HOLD_MS);
       };
-      later(() => { set(true, 200); later(cycle, span + 200 + 4000); }, 100 + stagger * index);
+      const fadeOut = () => {
+        tiles.forEach(t => { t.style.transitionDuration = '350ms'; t.classList.remove('lit'); });
+        later(lightUp, span + 350 + DIGIT_REST_MS);
+      };
+      later(lightUp, start + stagger * index);
     });
   }
 
@@ -222,10 +225,11 @@
     const anim = opts.animate ? ' reveal' : '';
     const delay = opts.animate ? ` style="animation-delay:${opts.delay}ms"` : '';
     const subs = group.subsidiary.map(sb => `
-      <div class="sub-badge${opts.animate ? ' fade-in' : ''}"${delay}>
+      <div class="sub-badge${opts.animate ? ' fade-in' : ''}" data-tier="${sb.tier}"${delay}>
         <span>└</span><span>${sb.emoji}</span>
         <span class="name" data-badge="${sb.id}" style="cursor:pointer">${esc(sb.label)}</span>
         ${opts.newIds && opts.newIds.has(sb.id) ? '<span class="new-tag">NEW</span>' : ''}
+        <span class="digits mini">${digitTiles(n, sb.id)}</span>
         <span class="earned">(earned)</span>
       </div>`).join('');
     return `<div class="badge-group">
@@ -418,7 +422,7 @@
         ${breakdownHTML(r[0], a)}
       </div>`, m => {
       m.querySelector('[data-share]').addEventListener('click', () => share(a));
-      animateDigits(m, 120);
+      animateDigits(m, { stagger: 120 });
     });
   }
 
@@ -695,7 +699,7 @@
       step(i === 0 ? REVEAL.badgeStart : badgeDelay(i - 1, ascending.length), quick => {
         $('#r-breakdown').hidden = false;
         $('#r-list').insertAdjacentHTML('afterbegin', badgeCardHTML(g, n, { newIds: ctx.newIds, animate: !quick && !reducedMotion, delay: 0 }));
-        animateDigits($('#r-list'));
+        animateDigits($('#r-list'), { start: reducedMotion ? 0 : 450 });
         const from = running;
         running += g.badge.score;
         countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * kb, v => `${fmt(v)} EP`);

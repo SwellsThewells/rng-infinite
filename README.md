@@ -37,6 +37,12 @@ Regénérer les données après modification du moteur :
 node tools/build.mjs
 ```
 
+Avant chaque commit, versionner les CSS/JS pour contourner le cache de GitHub Pages :
+
+```bash
+node tools/stamp.mjs
+```
+
 ## Leaderboard (à venir)
 
 Les tirages étant illimités, le classement portera sur le **meilleur tirage** (jour / semaine / all-time) et non sur l'EP total.

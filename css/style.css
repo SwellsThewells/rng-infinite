@@ -556,7 +556,13 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 }
 .dt { transition-property: background-color, border-color, color; transition-duration: .2s; transition-timing-function: ease-out; }
 .dt.hl { font-weight: 700; }
-.dt.hl.lit { background: var(--hl-bg); border-color: var(--hl-bd); color: #000; }
+.dt.hl.lit { background: var(--hl-bg); border-color: var(--hl-bd); color: #000; animation: tilepop .35s ease-out both; }
+@keyframes tilepop { 0% { transform: scale(1); } 45% { transform: scale(1.22); } 100% { transform: scale(1); } }
+.sub-badge { flex-wrap: wrap; }
+.digits.mini { margin-left: auto; padding-top: 0; border-top: 0; gap: .18rem; }
+.digits.mini .dt { width: .95rem; height: 1.1rem; font-size: .6rem; border-radius: .18rem; }
+.sub-badge .digits.mini ~ .earned { margin-left: .5rem; }
+@media (prefers-reduced-motion: reduce) { .dt.hl.lit { animation: none; } }
 .dark [data-tier="common"] { --t-hl: #9ca3af; --t-hl-border: #e5e7eb; }
 
 /* barres de distribution (une seule teinte, repère "attendu" en pointillé) */
