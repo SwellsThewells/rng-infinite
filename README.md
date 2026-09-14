@@ -1,7 +1,8 @@
 # RNG∞
 
 Jeu de nombre aléatoire **sans limite quotidienne**, inspiré de [rngdle.com](https://www.rngdle.com/).
-Chaque tirage donne un nombre entre 0 et 1 000 000, analysé par 233 badges (palindromes, premiers, suites, nombres mèmes…) qui rapportent des EP.
+Chaque tirage donne un nombre entre 0 et 1 000 000, analysé par les 233 badges d'origine (palindromes, premiers, suites, nombres mèmes…) qui rapportent des EP,
+plus des badges perso définis dans `tools/source/custom.json` — pour l'instant **Drastix** 💥 : le nombre contient « 235 », 25 000 EP.
 
 ## Ce qu'il y a en plus de l'original
 

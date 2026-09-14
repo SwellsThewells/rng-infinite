@@ -19,6 +19,7 @@
       version: 1,
       player: { id: uid(), name: '' },
       settings: { speed: 'normal', theme: 'system', sound: false },
+      scoreVersion: null,
       rolls: [],
     };
   }
@@ -33,6 +34,7 @@
         version: 1,
         player: Object.assign(base.player, data.player),
         settings: Object.assign(base.settings, data.settings),
+        scoreVersion: data.scoreVersion || null,
         rolls: Array.isArray(data.rolls) ? data.rolls.filter(isValidRoll) : [],
       };
     } catch (e) {
@@ -84,6 +86,19 @@
       this.state.settings[key] = value;
       this.save();
       this.emit();
+    },
+
+    // Recalcule l'EP stocké de chaque tirage quand la version des scores change.
+    rescore(scoreOf, version) {
+      if (this.state.scoreVersion === version) return 0;
+      let changed = 0;
+      for (const r of this.state.rolls) {
+        const s = scoreOf(r[0]);
+        if (s !== r[1]) { r[1] = s; changed++; }
+      }
+      this.state.scoreVersion = version;
+      this.save();
+      return changed;
     },
 
     clearRolls() {

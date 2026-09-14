@@ -13,31 +13,45 @@ const { createEngine, TIER_ORDER } = require(path.join(ROOT, 'js/engine.js'));
 
 const meta = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/source/meta.json'), 'utf8'));
 const family = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/source/family.json'), 'utf8'));
-const BADGE_META = meta.map(b => ({
-  id: b.id, label: b.label, desc: b.desc, emoji: b.emoji, score: b.score, family: family[b.id] || null,
-}));
+// Badges ajoutés pour nos parties (absents de l'original) : exclus des validations contre l'original.
+const custom = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/source/custom.json'), 'utf8'));
+const CUSTOM_IDS = new Set(custom.map(b => b.id));
+const BADGE_META = [
+  ...meta.map(b => ({ id: b.id, label: b.label, desc: b.desc, emoji: b.emoji, score: b.score, family: family[b.id] || null })),
+  ...custom.map(b => ({ id: b.id, label: b.label, desc: b.desc, emoji: b.emoji, score: b.score, family: null, custom: true })),
+].sort((a, b) => b.score - a.score);
 
 const SPAN = 1000001;
 const engine = createEngine(BADGE_META, null);
 const index = new Map(engine.badges.map((b, i) => [b.id, i]));
 const counts = new Float64Array(engine.badges.length);
 const totals = new Float64Array(SPAN);
+const originalTotals = new Float64Array(SPAN);
 
 const t0 = Date.now();
 for (let n = 0; n < SPAN; n++) {
-  totals[n] = engine.scoreOf(n, b => { counts[index.get(b.id)]++; });
+  let customPart = 0;
+  totals[n] = engine.scoreOf(n, b => {
+    counts[index.get(b.id)]++;
+    if (CUSTOM_IDS.has(b.id)) customPart += b.score;
+  });
+  originalTotals[n] = totals[n] - customPart;
 }
 console.log(`Énumération : ${((Date.now() - t0) / 1000).toFixed(1)} s`);
 
 let mismatches = 0;
 engine.badges.forEach((b, i) => {
   const derived = counts[i] ? Math.round((100 * SPAN) / counts[i]) : Infinity;
+  if (CUSTOM_IDS.has(b.id)) {
+    console.log(`  • badge perso ${b.id} : ${b.score} EP (valeur naturelle d'après sa fréquence : ${derived})`);
+    return;
+  }
   if (derived !== b.score) {
     mismatches++;
     console.log(`  ✗ ${b.id.padEnd(26)} attendu ${b.score}  obtenu ${derived}  (nb=${counts[i]})`);
   }
 });
-console.log(`Badges : ${engine.badges.length - mismatches}/${engine.badges.length} scores conformes`);
+console.log(`Badges d'origine : ${meta.length - mismatches}/${meta.length} scores conformes`);
 
 // Totaux relevés sur le leaderboard d'origine (tirages du jour).
 const KNOWN = {
@@ -60,7 +74,7 @@ const KNOWN = {
 };
 let knownOk = 0;
 for (const [n, expected] of Object.entries(KNOWN)) {
-  const got = totals[Number(n)];
+  const got = originalTotals[Number(n)];
   if (got === expected) knownOk++;
   else console.log(`  ✗ tirage ${n} : attendu ${expected} EP, obtenu ${got} EP`);
 }

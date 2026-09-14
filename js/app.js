@@ -17,14 +17,14 @@
   const SPEEDS = {
     dramatic: { badges: 1, base: 1 },
     normal: { badges: 0.85, base: 0.6 },
-    fast: { badges: 0.35, base: 0.25 },
   };
-  const SPEED_LABELS = { dramatic: 'original', normal: 'normal', fast: 'fast' };
+  const SPEED_LABELS = { dramatic: 'original', normal: 'normal' };
   // Chaque chiffre suivant se fait attendre un peu plus ; idem pour les badges, jusqu'au plus rare.
   const digitDelay = (i, count) => REVEAL.digitBase + (REVEAL.digitMax - REVEAL.digitBase) * Math.pow(i / (count - 1), 2);
   const badgeDelay = (i, count) => (count <= 1 ? REVEAL.badgeBase
     : REVEAL.badgeBase + (REVEAL.badgeMax - REVEAL.badgeBase) * Math.pow(i / (count - 1), 1.5));
-  const GROUP_COLORS = [['#93c5fd', '#2563eb'], ['#c4b5fd', '#7c3aed'], ['#fdba74', '#ea580c'], ['#f9a8d4', '#db2777'], ['#fcd34d', '#b45309'], ['#86efac', '#15803d']];
+  const GROUP_COLORS = [['#93c5fd', '#2563eb'], ['#86efac', '#059669'], ['#fcd34d', '#d97706'], ['#f9a8d4', '#db2777']];
+  const RIPPLE_FROM_CENTER = new Set(['MOUNTAIN', 'VALLEY']);
   const LABELS = new Map(Engine.badges.map(b => [b.id, b.label.toLowerCase()]));
 
   const app = document.getElementById('app');
@@ -127,18 +127,52 @@
   }
 
   // ---------------------------------------------------------------- badges : rendu
+  // Chiffres sous un badge : chaque chiffre concerné reçoit sa couleur et son délai d'allumage
+  // (80 ms d'écart, groupe après groupe ; Mountain/Valley s'allument depuis le centre). animateDigits les allume.
   function digitTiles(n, id) {
     const s = String(n);
     const groups = Engine.highlight(id, n);
-    const owner = new Map();
-    groups.forEach((g, gi) => g.forEach(i => { if (!owner.has(i)) owner.set(i, gi); }));
     const multi = groups.length > 1;
+    const info = new Map();
+    let offset = 0;
+    groups.forEach((g, gi) => {
+      const [bg, bd] = multi ? GROUP_COLORS[gi % GROUP_COLORS.length] : ['var(--t-hl)', 'var(--t-hl-border)'];
+      g.forEach((i, k) => { if (!info.has(i)) info.set(i, { bg, bd, delay: offset + 80 * k }); });
+      offset += 80 * g.length + 100;
+    });
+    if (RIPPLE_FROM_CENTER.has(id)) {
+      const idx = [...info.keys()].sort((a, b) => a - b);
+      const mid = idx[Math.floor(idx.length / 2)];
+      info.forEach((v, i) => { v.delay = 80 * Math.abs(i - mid); });
+    }
     return s.split('').map((ch, i) => {
-      if (!owner.has(i)) return `<span class="dt">${ch}</span>`;
-      if (!multi) return `<span class="dt on">${ch}</span>`;
-      const [bg, bd] = GROUP_COLORS[owner.get(i) % GROUP_COLORS.length];
-      return `<span class="dt on" style="background:${bg};border-color:${bd}">${ch}</span>`;
+      const t = info.get(i);
+      return t
+        ? `<span class="dt hl" data-delay="${t.delay}" style="--hl-bg:${t.bg};--hl-bd:${t.bd}">${ch}</span>`
+        : `<span class="dt">${ch}</span>`;
     }).join('');
+  }
+
+  // Allume les chiffres un par un, puis toutes les ~4 s les éteint en vague et les rallume, tant que la carte est affichée.
+  function animateDigits(root, stagger = 0) {
+    root.querySelectorAll('.digits:not([data-animated])').forEach((box, index) => {
+      box.dataset.animated = '1';
+      const tiles = Array.from(box.querySelectorAll('.dt.hl'));
+      if (!tiles.length) return;
+      if (reducedMotion) { tiles.forEach(t => t.classList.add('lit')); return; }
+      const span = Math.max(...tiles.map(t => Number(t.dataset.delay)));
+      const set = (on, duration) => tiles.forEach(t => {
+        t.style.transitionDuration = duration + 'ms';
+        t.style.transitionDelay = t.dataset.delay + 'ms';
+        t.classList.toggle('lit', on);
+      });
+      const later = (fn, ms) => setTimeout(() => { if (box.isConnected) fn(); }, ms);
+      const cycle = () => {
+        set(false, 400);
+        later(() => { set(true, 400); later(cycle, span + 400 + 4000); }, span + 400 + 100);
+      };
+      later(() => { set(true, 200); later(cycle, span + 200 + 4000); }, 100 + stagger * index);
+    });
   }
 
   const POWER_K = { SQUARE: 2, CUBE: 3, FOURTH_POWER: 4, FIFTH_POWER: 5, SIXTH_POWER: 6, SEVENTH_POWER: 7, EIGHTH_POWER: 8, NINTH_POWER: 9, TENTH_POWER: 10, ELEVENTH_POWER: 11, THIRTEENTH_POWER: 13, SEVENTEENTH_POWER: 17, NINETEENTH_POWER: 19 };
@@ -382,7 +416,10 @@
         ${occ.length > 1 ? `<p class="repeat-note">Rolled ${occ.length}× in your history: ${occ.map(i => `<a href="javascript:void 0" data-roll="${i}">#${fmt(i + 1)}</a>`).join(', ')}</p>` : ''}
         <div class="result-actions"><button class="btn" data-share>${shareIcon()} Share</button></div>
         ${breakdownHTML(r[0], a)}
-      </div>`, m => m.querySelector('[data-share]').addEventListener('click', () => share(a)));
+      </div>`, m => {
+      m.querySelector('[data-share]').addEventListener('click', () => share(a));
+      animateDigits(m, 120);
+    });
   }
 
   function openBadgeModal(id) {
@@ -404,6 +441,7 @@
         <h2 style="margin:.35rem 0 .5rem">${esc(b.label)}</h2>
         <div class="pill-row">${tierPill(b.tier)}<span class="ep-pill">+${fmt(b.score)} EP</span></div>
         <p class="badge-desc" style="font-size:.74rem;margin:.8rem 0 1rem">${esc(b.desc)}</p>
+        ${b.custom ? '<p class="panel-note" style="margin:-.4rem 0 1rem">Custom badge — not in the original game</p>' : ''}
       </div>
       <div class="kv"><span class="k">Odds</span><span class="v">${oneIn(odds)} · ${pctStr(odds)}</span></div>
       <div class="kv"><span class="k">You earned it</span><span class="v">${e ? plural(e.count, 'time') : 'Not yet'}</span></div>
@@ -428,7 +466,7 @@
         <input class="input" id="set-name" maxlength="20" autocomplete="off" value="${esc(Store.player.name)}" placeholder="Player">
         <span class="panel-note">Used on the leaderboard once it goes online.</span>
       </div>
-      <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal', 'fast'], SPEEDS[s.speed] ? s.speed : 'normal', SPEED_LABELS)}</div>
+      <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal'], SPEEDS[s.speed] ? s.speed : 'normal', SPEED_LABELS)}</div>
       <div class="field"><label>Theme</label>${seg('theme', ['light', 'system', 'dark'], s.theme)}</div>
       <div class="danger-zone">
         <button class="btn" id="set-export">Export history</button>
@@ -657,6 +695,7 @@
       step(i === 0 ? REVEAL.badgeStart : badgeDelay(i - 1, ascending.length), quick => {
         $('#r-breakdown').hidden = false;
         $('#r-list').insertAdjacentHTML('afterbegin', badgeCardHTML(g, n, { newIds: ctx.newIds, animate: !quick && !reducedMotion, delay: 0 }));
+        animateDigits($('#r-list'));
         const from = running;
         running += g.badge.score;
         countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * kb, v => `${fmt(v)} EP`);
@@ -1182,6 +1221,14 @@
       if (!e.repeat) startRoll();
     }
   });
+
+  // Si la liste des badges ou leurs EP changent (ex. badge perso ajouté), on recalcule l'EP des anciens tirages.
+  const SCORE_VERSION = (() => {
+    let h = 0;
+    for (const b of window.BADGE_META) for (const ch of b.id + b.score) h = (h * 31 + ch.charCodeAt(0)) | 0;
+    return String(h);
+  })();
+  Store.rescore(n => Engine.scoreOf(n), SCORE_VERSION);
 
   window.addEventListener('hashchange', route);
   applyTheme();

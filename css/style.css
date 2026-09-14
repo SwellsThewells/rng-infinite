@@ -554,7 +554,9 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
   font-size: .7rem;
   color: var(--prose-3);
 }
-.dt.on { color: #000; font-weight: 700; background: var(--t-hl); border-color: var(--t-hl-border); }
+.dt { transition-property: background-color, border-color, color; transition-duration: .2s; transition-timing-function: ease-out; }
+.dt.hl { font-weight: 700; }
+.dt.hl.lit { background: var(--hl-bg); border-color: var(--hl-bd); color: #000; }
 .dark [data-tier="common"] { --t-hl: #9ca3af; --t-hl-border: #e5e7eb; }
 
 /* barres de distribution (une seule teinte, repère "attendu" en pointillé) */
