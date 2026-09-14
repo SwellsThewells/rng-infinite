@@ -606,7 +606,8 @@
             <button class="btn" id="r-share">${shareIcon()} Share</button>
             <button class="btn-roll small" id="r-again">Roll again</button>
           </div>
-          <p class="hint invisible" id="r-hint">click the number or press <kbd>Space</kbd> to speed up the badges</p>
+          <p class="hint invisible" id="r-hint">press <kbd>Space</kbd> or click the number to skip the badges</p>
+          <button class="btn-roll small skip-fab" id="r-skip" hidden>Skip badges ⏭</button>
           <div id="r-notes" style="text-align:center"></div>
           <section class="breakdown" id="r-breakdown" hidden>
             <h2 class="section-title">Badge breakdown</h2>
@@ -650,6 +651,7 @@
       digitsDone = true;
       document.body.classList.remove('locked');
       show($('#r-hint'), 'fade-in');
+      $('#r-skip').hidden = false;
       if (!lead) return;
       const collapse = () => slots.slice(0, lead).forEach(el => el.classList.add('collapsed'));
       if (quick) collapse(); else setTimeout(collapse, 260);
@@ -681,6 +683,7 @@
       show($('#r-actions'), 'fade-in');
       $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
       canReroll = true;
+      $('#r-skip').hidden = true;
     });
     step(REVEAL.stats, () => show($('#r-meta'), 'pop-in'));
     step(REVEAL.lifetimeShow, () => show($('#r-life'), 'fade-in'));
@@ -704,6 +707,7 @@
     }
 
     card.addEventListener('click', skip);
+    $('#r-skip').addEventListener('click', skip);
     $('#r-share').addEventListener('click', () => share(a));
     $('#r-again').addEventListener('click', () => startRoll(true));
 
