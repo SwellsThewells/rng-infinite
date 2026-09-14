@@ -19,6 +19,10 @@ vm.createContext(sandbox);
 for (const f of ['js/badge-meta.js', 'js/percentiles.js']) vm.runInContext(fs.readFileSync(path.join(ROOT, f), 'utf8'), sandbox);
 const { BADGE_META, SCORE_PERCENTILES, TIER_ODDS, SCORE_STATS } = JSON.parse(JSON.stringify(sandbox.window));
 
+// Libellés adaptés aux règles de Roblox (drogue, allusions sexuelles) : mêmes id et scores, la validation ne change pas.
+const OVERRIDES = JSON.parse(fs.readFileSync(path.join(ROOT, 'tools/source/roblox-overrides.json'), 'utf8'));
+for (const id of Object.keys(OVERRIDES)) if (!BADGE_META.some(b => b.id === id)) throw new Error('Override de badge inconnu : ' + id);
+
 const engine = createEngine(BADGE_META, SCORE_PERCENTILES);
 const index = new Map(engine.badges.map((b, i) => [b.id, i + 1]));
 const TIER_RANK = Object.fromEntries(TIER_ORDER.map((t, i) => [t, i]));
@@ -60,7 +64,7 @@ for (const e of SCORE_PERCENTILES) {
 console.log('Écriture :');
 write('roblox/src/ReplicatedStorage/RNG/BadgeMeta.luau',
   HEADER + `-- ${BADGE_META.length} badges triés par score décroissant.\nreturn {\n` +
-  BADGE_META.map(b => '\t' + lua({ id: b.id, label: b.label, desc: b.desc, emoji: b.emoji, score: b.score, family: b.family, custom: b.custom })).join(',\n') +
+  BADGE_META.map(b => { const o = OVERRIDES[b.id] || {}; return '\t' + lua({ id: b.id, label: o.label ?? b.label, desc: o.desc ?? b.desc, emoji: o.emoji ?? b.emoji, score: b.score, family: b.family, custom: b.custom }); }).join(',\n') +
   '\n}\n');
 write('roblox/src/ReplicatedStorage/RNG/Percentiles.luau',
   HEADER + `-- ${reduced.length} entrées {score, percentile} extraites des ${SCORE_PERCENTILES.length} de js/percentiles.js.\nreturn {\n` +

@@ -1,0 +1,16 @@
+{
+  "NICE_EXACT": { "label": "Exact Flip", "desc": "Exactly \"69\".", "emoji": "🔄" },
+  "NICE": { "label": "Flip", "desc": "Contains \"69\".", "emoji": "🔄" },
+  "VERY_NICE": { "label": "Double Flip", "desc": "Contains \"6969\".", "emoji": "🔁" },
+  "VERY_VERY_NICE": { "label": "Triple Flip", "desc": "Exactly \"696969\".", "emoji": "🔁" },
+  "BOTANIST_EXACT": { "label": "Exact Afternoon", "desc": "Exactly \"420\".", "emoji": "🕓" },
+  "BOTANIST": { "label": "Afternoon", "desc": "Contains \"420\".", "emoji": "🕓" },
+  "HOTBOX": { "label": "Double Afternoon", "desc": "Exactly \"420420\".", "emoji": "🕓" },
+  "ULTIMEME_EXACT": { "label": "Exact Combo", "desc": "Exactly \"69420\" or \"42069\".", "emoji": "🎰" },
+  "ULTIMEME": { "label": "Combo", "desc": "Contains both \"69\" and \"420\".", "emoji": "🎰" },
+  "EXACT_BOOB": { "label": "Exact 8008", "desc": "Exactly \"8008\" or \"58008\".", "emoji": "🔢" },
+  "EXACT_BOOB_80085": { "label": "Exact 80085", "desc": "Exactly \"80085\".", "emoji": "🔢" },
+  "BOOB_8008": { "label": "8008", "desc": "Contains \"8008\".", "emoji": "🔢" },
+  "BOOB_58008": { "label": "58008", "desc": "Contains \"58008\".", "emoji": "🔢" },
+  "BOOB_80085": { "label": "80085", "desc": "Contains \"80085\".", "emoji": "🔢" }
+}

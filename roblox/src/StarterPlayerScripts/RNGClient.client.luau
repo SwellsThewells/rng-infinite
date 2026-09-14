@@ -13,6 +13,7 @@ local HttpService = game:GetService("HttpService")
 local SoundService = game:GetService("SoundService")
 local StarterGui = game:GetService("StarterGui")
 local TextChatService = game:GetService("TextChatService")
+local MarketplaceService = game:GetService("MarketplaceService")
 
 local player = Players.LocalPlayer
 local RNG = ReplicatedStorage:WaitForChild("RNG")
@@ -20,12 +21,14 @@ local Engine = require(RNG.Engine)
 local Timing = require(RNG.Timing)
 local Theme = require(RNG.Theme)
 local Percentiles = require(RNG.Percentiles)
+local Shop = require(RNG.Shop)
 local remotes = ReplicatedStorage:WaitForChild("RNGRemotes")
 local RollFn = remotes:WaitForChild("Roll")
 local ProfileFn = remotes:WaitForChild("GetProfile")
 local FeedEvent = remotes:WaitForChild("Feed")
 local NoticeEvent = remotes:WaitForChild("Notice")
 local boardValue = remotes:WaitForChild("Leaderboards")
+local SetSkinFn = remotes:WaitForChild("SetSkin")
 
 local fmt = Engine.fmt
 local TIER_RANK = Engine.TIER_RANK
@@ -37,6 +40,7 @@ local H, V = Enum.FillDirection.Horizontal, Enum.FillDirection.Vertical
 local CENTER, LEFT, RIGHT = Enum.HorizontalAlignment.Center, Enum.HorizontalAlignment.Left, Enum.HorizontalAlignment.Right
 local MIDDLE = Enum.VerticalAlignment.Center
 local PAGE_WIDTH = 736 -- 46rem, largeur des pages du site
+local VIP_GOLD = hex("#fbbf24")
 
 local SOUNDS = {
 	digit = { id = "rbxassetid://78684821207838", volume = 0.35 }, -- mixkit interface click
@@ -284,8 +288,16 @@ local function newTag(size)
 	})
 end
 
--- Carte numéro : dégradé + bordure de la rareté (neutre tant que la rareté n'est pas révélée).
-local function numCard(str, tier, fontSize, padY, padX)
+-- Apparences de carte de la boutique, appliquées une fois la rareté connue (Classic = style du site).
+local SKIN_STYLES = {
+	galaxy = { colors = { hex("#1e1b4b"), hex("#3730a3"), hex("#0c0a2a") }, transparency = { 0, 0, 0 }, border = hex("#a5b4fc"), text = WHITE },
+	ice = { colors = { hex("#7dd3fc"), hex("#f0f9ff"), hex("#7dd3fc") }, transparency = { 0.7, 0.82, 0.7 }, border = hex("#bae6fd"), text = hex("#f0f9ff") },
+	gold = { colors = { hex("#b45309"), hex("#fcd34d"), hex("#b45309") }, transparency = { 0, 0, 0 }, border = hex("#fef08a"), text = hex("#422006") },
+	neon = { ring = true },
+}
+
+-- Carte numéro : dégradé + bordure de la rareté (neutre tant que la rareté n'est pas révélée), puis l'apparence choisie.
+local function numCard(str, tier, fontSize, padY, padX, skin)
 	local card = new("Frame", { Name = "NumCard", AutomaticSize = AUTO_XY, Size = UDim2.new(), BackgroundColor3 = WHITE, BorderSizePixel = 0 }, {
 		corner(math.max(6, math.floor(fontSize * 0.24))), padding(padY, padX), list(H, 0, CENTER, MIDDLE), new("UIScale"),
 	})
@@ -293,12 +305,32 @@ local function numCard(str, tier, fontSize, padY, padX)
 	local st = stroke(Theme.outlineStrong, if fontSize >= 30 then 2 else 1.5, 0)
 	st.Parent = card
 	local label = if str then text({ AutomaticSize = AUTO_XY, Text = str, FontFace = Theme.monoBold, TextSize = fontSize, Parent = card }) else nil
+	local baseThickness = st.Thickness
+	-- Renvoie la couleur des chiffres, pour les cases de la révélation.
 	local function style(tier)
 		local c = if tier then Theme.tier[tier] else Theme.neutral
-		grad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, c.from), ColorSequenceKeypoint.new(0.5, c.via), ColorSequenceKeypoint.new(1, c.to) })
-		grad.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1 - c.fromA), NumberSequenceKeypoint.new(0.5, 1 - c.viaA), NumberSequenceKeypoint.new(1, 1 - c.toA) })
-		st.Color = c.border
-		if label then label.TextColor3 = c.text end
+		local colors, transparency = { c.from, c.via, c.to }, { 1 - c.fromA, 1 - c.viaA, 1 - c.toA }
+		local border, textColor, thickness = c.border, c.text, baseThickness
+		local look = if tier and skin then SKIN_STYLES[skin] else nil
+		if look and look.colors then
+			colors, transparency, border, textColor = look.colors, look.transparency, look.border, look.text
+		end
+		grad.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, colors[1]), ColorSequenceKeypoint.new(0.5, colors[2]), ColorSequenceKeypoint.new(1, colors[3]) })
+		grad.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, transparency[1]), NumberSequenceKeypoint.new(0.5, transparency[2]), NumberSequenceKeypoint.new(1, transparency[3]) })
+		local ring = st:FindFirstChild("Ring")
+		if look and look.ring then
+			if not ring then
+				ring = new("UIGradient", { Name = "Ring", Parent = st })
+				table.insert(ringGradients, { g = ring })
+			end
+			border, thickness = WHITE, baseThickness + 1
+		elseif ring then
+			ring:Destroy()
+		end
+		st.Color = border
+		st.Thickness = thickness
+		if label then label.TextColor3 = textColor end
+		return textColor
 	end
 	style(tier)
 	return card, style, st
@@ -331,7 +363,11 @@ local function toast(msg)
 end
 
 ---------------------------------------------------------------------- profil local (copie du serveur)
-local profile = { rolls = {}, rollCount = 0, lifetimeEP = 0, best = nil, badges = {}, saving = true }
+local profile = { rolls = {}, rollCount = 0, lifetimeEP = 0, best = nil, badges = {}, ach = {}, skin = "default", streak = nil, saving = true }
+local autoRoll = false -- game pass Auto Roll, activé depuis l'écran de résultat
+local function owns(key)
+	return player:GetAttribute("Pass_" .. key) == true -- attributs posés par le serveur
+end
 local session = nil -- révélation en cours : { cancelled, canReroll, finished, stop }
 local rolling = false
 local currentPage = nil -- { name, frame }
@@ -349,7 +385,7 @@ end
 local topLeft = frame({ Size = UDim2.fromScale(0, 1), AutomaticSize = Enum.AutomaticSize.X, Parent = topbar }, { list(H, 6, LEFT, MIDDLE), padding(0, 0, 0, 16) })
 local logo = tbutton({ AutomaticSize = AUTO_XY, Text = spaced("RNG∞"), TextSize = 16, FontFace = Theme.fontHeavy, LayoutOrder = 1, Parent = topLeft }, { padding(4, 8, 4, 0) })
 logo.Activated:Connect(function() navigate("home") end)
-for i, def in { { "history", "🕘", "History" }, { "stats", "📊", "Stats" }, { "badges", "🏅", "Badges" }, { "leaderboard", "🏆", "Leaderboard" } } do
+for i, def in { { "history", "🕘", "History" }, { "stats", "📊", "Stats" }, { "badges", "🏅", "Badges" }, { "leaderboard", "🏆", "Leaderboard" }, { "shop", "🛒", "Shop" } } do
 	local b = tbutton({
 		Name = "Nav_" .. def[1], AutomaticSize = AUTO_XY, Text = "", TextSize = 12, FontFace = Theme.fontSemi, BackgroundColor3 = Theme.surfaceRaised,
 		BackgroundTransparency = 1, LayoutOrder = i + 1, Parent = topLeft,
@@ -659,7 +695,7 @@ function openRollModal(n, rollNumber, t)
 		local a = Engine.analyze(n)
 		eyebrow(body, `roll #{fmt(rollNumber)} · {relTime(t)}`, o())
 		spacer(body, 12, o())
-		local card = numCard(a.str, a.tier, 38, 5, 16)
+		local card = numCard(a.str, a.tier, 38, 5, 16, profile.skin)
 		card.LayoutOrder = o()
 		card.Parent = body
 		spacer(body, 12, o())
@@ -748,6 +784,7 @@ local function renderHome()
 	local rolls = profile.rolls
 	local hintParts = {}
 	if profile.rollCount > 0 then table.insert(hintParts, `{plural(profile.rollCount, "roll")} · {fmt(profile.lifetimeEP)} lifetime EP`) end
+	if profile.streak and profile.streak.count >= 2 then table.insert(hintParts, `🔥 {profile.streak.count}-day streak`) end
 	table.insert(hintParts, `playing as <b>{player.DisplayName}</b>`)
 	table.insert(hintParts, 'press <font face="RobotoMono" color="#f0f0f0">[Space]</font>')
 	text({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, RichText = true, Text = table.concat(hintParts, " · "), TextSize = 12, TextColor3 = Theme.prose2, TextWrapped = true, LayoutOrder = o(), Parent = col }, {
@@ -771,7 +808,7 @@ local function renderHome()
 		local fo = counter()
 		eyebrow(feature, "your best roll", fo())
 		spacer(feature, 12, fo())
-		local card = numCard(a.str, a.tier, 38, 5, 16)
+		local card = numCard(a.str, a.tier, 38, 5, 16, profile.skin)
 		card.LayoutOrder = fo()
 		card.Parent = feature
 		local when = if bestIndex then `roll #{fmt(rollNumberOf(bestIndex))} · {relTime(rolls[bestIndex][3])}` else relTime(profile.best[3])
@@ -853,7 +890,7 @@ local function playReveal(res)
 	local slotCount = math.max(6, #a.str)
 	local padded = string.rep("0", slotCount - #a.str) .. a.str
 	local lead = slotCount - #a.str
-	local sched = Timing.schedule(slotCount, #a.groups)
+	local sched = Timing.schedule(slotCount, #a.groups, res.speed)
 
 	local s = { cancelled = false, canReroll = false, finished = false }
 	session = s
@@ -867,7 +904,7 @@ local function playReveal(res)
 	spacer(col, 30, o())
 
 	-- Carte numéro et ses cases.
-	local card, styleCard, cardStroke = numCard(nil, nil, 54, 6, 22)
+	local card, styleCard, cardStroke = numCard(nil, nil, 54, 6, 22, profile.skin)
 	card.LayoutOrder = o()
 	card.Parent = col
 	local slots = {}
@@ -910,9 +947,29 @@ local function playReveal(res)
 	local again, againBtn = rollButton("Roll again", true, function() startRoll() end)
 	again.Parent = actions
 	againBtn.Active = false
+	-- Auto Roll (game pass) : relance tout seul à la fin de la révélation ; sans le pass, mène à la boutique.
+	local autoBtn = tbutton({
+		AutomaticSize = AUTO_XY, Text = "", TextSize = 12, FontFace = Theme.fontBold, BackgroundColor3 = Theme.surface,
+		BackgroundTransparency = 0, LayoutOrder = 2, Parent = actions,
+	}, { corner(7), stroke(Theme.outline), padding(9, 12) })
+	local function refreshAuto()
+		autoBtn.Text = if not owns("AUTO_ROLL") then "🔒  " .. spaced("auto roll") elseif autoRoll then "🔁  " .. spaced("auto: on") else "🔁  " .. spaced("auto: off")
+		autoBtn.TextColor3 = if owns("AUTO_ROLL") and autoRoll then Theme.success else Theme.prose2
+	end
+	refreshAuto()
+	autoBtn.Activated:Connect(function()
+		if not s.canReroll then return end
+		if not owns("AUTO_ROLL") then
+			navigate("shop")
+			return
+		end
+		autoRoll = not autoRoll
+		refreshAuto()
+		if autoRoll and s.finished then startRoll() end
+	end)
 	local hint = text({
 		AutomaticSize = AUTO_XY, RichText = true, TextTransparency = 1, TextSize = 12, TextColor3 = Theme.prose2, LayoutOrder = o(), Parent = col,
-		Text = '<font face="RobotoMono" color="#f0f0f0">[Space]</font> to roll again · click a badge name for details',
+		Text = '<font face="RobotoMono" color="#f0f0f0">[Space]</font> to roll again · click a badge name for details' .. (if res.speed == "fast" then ' · <font color="#ffb900">⚡ Fast Roll</font>' else ""),
 	}, { padding(12, 0, 0, 0) })
 	local notesOrder = o()
 
@@ -995,7 +1052,7 @@ local function playReveal(res)
 			c.Parent = listFrame
 			local from = running
 			running += g.badge.score
-			countUp(ep, from, running, Timing.REVEAL.badgeEp * Timing.BADGES / 1000, function(x) return fmt(x) .. " EP" end)
+			countUp(ep, from, running, sched.badgeEp, function(x) return fmt(x) .. " EP" end)
 			play("badge", 0.85 + TIER_RANK[g.badge.tier] * 0.07)
 		end)
 	end
@@ -1007,9 +1064,9 @@ local function playReveal(res)
 	end)
 	at(sched.rarity, function()
 		local tierColors = Theme.tier[a.tier]
-		styleCard(a.tier)
+		local digitColor = styleCard(a.tier)
 		for i = lead + 1, slotCount do
-			slots[i].TextColor3 = tierColors.text
+			slots[i].TextColor3 = digitColor
 		end
 		if a.tier == "anomaly" or a.tier == "mythic" then shake(card) else popScale(card, 0.9, 0.5) end
 		countUp(ep, 0, a.total, 0, function(x) return fmt(x) .. " EP" end)
@@ -1025,6 +1082,12 @@ local function playReveal(res)
 		tween(hint, 0.45, { TextTransparency = 0 })
 		s.canReroll = true
 		refreshNav()
+		if res.streak then profile.streak = res.streak end
+		for i, key in res.achievements or {} do
+			profile.ach[key] = os.time()
+			local def = Shop.achievementsByKey[key]
+			if def then task.delay(0.8 + (i - 1) * 3.4, toast, `🏆 Achievement unlocked: {def.icon} {def.name}`) end
+		end
 	end)
 	at(sched.stats, function()
 		tween(meta, 0.4, { GroupTransparency = 0 })
@@ -1037,11 +1100,16 @@ local function playReveal(res)
 		lifeDelta.TextTransparency = 0
 		lifeDelta.Position = UDim2.new(1, 6, 0, 2)
 		tween(lifeDelta, 1.8, { TextTransparency = 1, Position = UDim2.new(1, 6, 0, -12) })
-		countUp(lifeValue, res.lifetimeBefore, res.lifetimeBefore + a.total, Timing.REVEAL.lifetimeTick * Timing.BASE / 1000, fmt)
+		countUp(lifeValue, res.lifetimeBefore, res.lifetimeBefore + a.total, sched.lifetimeTick, fmt)
 	end)
 	at(sched.finish, function()
 		tween(vignette, 0.8, { BackgroundTransparency = 1 })
 		s.finished = true
+		if autoRoll and owns("AUTO_ROLL") then
+			task.delay(0.6, function()
+				if session == s and currentPage and currentPage.name == "result" and autoRoll and not modal.Visible then startRoll() end
+			end)
+		end
 	end)
 end
 
@@ -1167,13 +1235,14 @@ local function renderStats()
 	end
 
 	local cards = frame({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, LayoutOrder = o(), Parent = col }, {
-		new("UIGridLayout", { CellSize = UDim2.new(0.25, -8, 0, 78), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+		new("UIGridLayout", { CellSize = UDim2.new(0.2, -8, 0, 78), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
 	})
 	for i, def in {
 		{ "rolls", fmt(profile.rollCount) },
 		{ "lifetime EP", fmt(profile.lifetimeEP) },
 		{ "average EP", fmt(sum / #rolls) },
 		{ "best roll", if profile.best then tostring(profile.best[1]) else "—" },
+		{ "day streak", if profile.streak then fmt(profile.streak.count) else "0" },
 	} do
 		local c = frame({ BackgroundColor3 = Theme.surface, BackgroundTransparency = 0, LayoutOrder = i, Parent = cards }, { corner(10), stroke(Theme.outline), list(V, 4, CENTER, MIDDLE) })
 		text({ Size = UDim2.new(1, -10, 0, 28), Text = def[2], TextSize = 22, FontFace = Theme.monoBold, TextScaled = false, TextTruncate = Enum.TextTruncate.AtEnd, LayoutOrder = 1, Parent = c })
@@ -1207,6 +1276,26 @@ local function renderStats()
 	spacer(col, 12, o())
 	text({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextWrapped = true, TextSize = 12, TextColor3 = Theme.prose3, LayoutOrder = o(), Parent = col,
 		Text = `White tick = expected share. Longest run without a Rare or better: {fmt(bestStreakNoRare)} rolls.` })
+	spacer(col, 30, o())
+	sectionTitle(col, "Achievements", o())
+	local unlockedCount = 0
+	for _, def in Shop.achievements do
+		if profile.ach[def.key] then unlockedCount += 1 end
+	end
+	eyebrow(col, `{unlockedCount} / {#Shop.achievements} unlocked`, o(), Theme.prose2)
+	spacer(col, 14, o())
+	local achGrid = frame({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, LayoutOrder = o(), Parent = col }, {
+		new("UIGridLayout", { CellSize = UDim2.new(0.5, -5, 0, 58), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	for i, def in Shop.achievements do
+		local got = profile.ach[def.key]
+		local tile = frame({ BackgroundColor3 = if got then Theme.surfaceRaised else Theme.surface, BackgroundTransparency = 0, LayoutOrder = i, Parent = achGrid }, {
+			corner(8), stroke(if got then Theme.success else Theme.outline, 1, if got then 0.4 else 0),
+		})
+		text({ Position = UDim2.fromOffset(10, 0), Size = UDim2.new(0, 36, 1, 0), Text = def.icon, TextSize = 24, TextTransparency = if got then 0 else 0.7, Parent = tile })
+		text({ Position = UDim2.fromOffset(54, 10), Size = UDim2.new(1, -64, 0, 18), Text = spaced(def.name), TextSize = 12.5, FontFace = Theme.fontBold, TextColor3 = if got then Theme.prose else Theme.prose3, TextXAlignment = Enum.TextXAlignment.Left, Parent = tile })
+		text({ Position = UDim2.fromOffset(54, 30), Size = UDim2.new(1, -64, 0, 18), Text = if got then `{def.desc} · {relTime(got)}` else def.desc, TextSize = 11.5, TextColor3 = Theme.prose3, TextTruncate = Enum.TextTruncate.AtEnd, TextXAlignment = Enum.TextXAlignment.Left, Parent = tile })
+	end
 end
 
 ---------------------------------------------------------------------- collection
@@ -1295,7 +1384,7 @@ local function renderLeaderboard()
 			})
 			local leftSide = frame({ Size = UDim2.new(1, -150, 1, 0), Parent = row }, { list(H, 10, LEFT, MIDDLE), padding(0, 0, 0, 12) })
 			text({ Size = UDim2.fromOffset(34, 24), Text = MEDALS[i] or `#{i}`, TextSize = if MEDALS[i] then 20 else 13, FontFace = Theme.monoBold, TextColor3 = Theme.prose3, LayoutOrder = 1, Parent = leftSide })
-			text({ Size = UDim2.fromOffset(150, 24), Text = e.name, TextSize = 14, FontFace = Theme.fontBold, TextTruncate = Enum.TextTruncate.AtEnd, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, Parent = leftSide })
+			text({ Size = UDim2.fromOffset(150, 24), Text = if e.vip then "👑 " .. e.name else e.name, TextColor3 = if e.vip then VIP_GOLD else Theme.prose, TextSize = 14, FontFace = Theme.fontBold, TextTruncate = Enum.TextTruncate.AtEnd, TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = 2, Parent = leftSide })
 			local chip = numCard(tostring(e.n), tier, 16, 1, 8)
 			chip.LayoutOrder = 3
 			chip.Parent = leftSide
@@ -1323,8 +1412,127 @@ end
 boardValue.Changed:Connect(onBoards)
 onBoards()
 
+---------------------------------------------------------------------- boutique
+local priceCache = {}
+local function showPrice(pass, label)
+	if pass.id == 0 then
+		label.Text = spaced("coming soon")
+		return
+	end
+	if priceCache[pass.id] then
+		label.Text = `R$ {fmt(priceCache[pass.id])}`
+		return
+	end
+	task.spawn(function()
+		local ok, info = pcall(MarketplaceService.GetProductInfo, MarketplaceService, pass.id, Enum.InfoType.GamePass)
+		if ok and type(info) == "table" and info.PriceInRobux then
+			priceCache[pass.id] = info.PriceInRobux
+			if label.Parent then label.Text = `R$ {fmt(info.PriceInRobux)}` end
+		end
+	end)
+end
+
+local function skinUnlocked(skin)
+	if skin.key == "default" then return true end
+	if skin.pass and owns(skin.pass) then return true end
+	return skin.achievement ~= nil and profile.ach[skin.achievement] ~= nil
+end
+
+local function renderShop()
+	local _, col = openPage("shop")
+	local o = counter()
+	spacer(col, 20, o())
+	pageTitle(col, "Shop", o())
+	text({
+		Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, TextWrapped = true, TextSize = 13, TextColor3 = Theme.prose3,
+		TextXAlignment = Enum.TextXAlignment.Left, LayoutOrder = o(), Parent = col,
+		Text = "Game passes are one-time purchases. Want to roll with your friends only? Private servers are on the game page.",
+	})
+	spacer(col, 18, o())
+	sectionTitle(col, "Game passes", o())
+	spacer(col, 12, o())
+	local passGrid = frame({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, LayoutOrder = o(), Parent = col }, {
+		new("UIGridLayout", { CellSize = UDim2.new(0.5, -6, 0, 158), CellPadding = UDim2.fromOffset(12, 12), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	for i, pass in Shop.passes do
+		local owned = owns(pass.key)
+		local tile = frame({ BackgroundColor3 = Theme.surface, BackgroundTransparency = 0, LayoutOrder = i, Parent = passGrid }, {
+			corner(10), stroke(if owned then Theme.success else Theme.outline, 1, if owned then 0.3 else 0),
+		})
+		text({ Position = UDim2.fromOffset(14, 12), Size = UDim2.fromOffset(40, 40), Text = pass.icon, TextSize = 30, Parent = tile })
+		text({ Position = UDim2.fromOffset(62, 14), Size = UDim2.new(1, -76, 0, 20), Text = spaced(pass.name), TextSize = 15, FontFace = Theme.fontHeavy, TextXAlignment = Enum.TextXAlignment.Left, Parent = tile })
+		local price = text({ Position = UDim2.fromOffset(62, 35), Size = UDim2.new(1, -76, 0, 16), Text = "", TextSize = 12, FontFace = Theme.monoBold, TextColor3 = Theme.epText, TextXAlignment = Enum.TextXAlignment.Left, Parent = tile })
+		if owned then
+			price.Text = spaced("owned")
+			price.TextColor3 = Theme.success
+		else
+			showPrice(pass, price)
+		end
+		text({
+			Position = UDim2.fromOffset(14, 58), Size = UDim2.new(1, -28, 0, 48), Text = pass.desc, TextWrapped = true, TextSize = 12.5, TextColor3 = Theme.prose2,
+			TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top, Parent = tile,
+		})
+		local buy = tbutton({
+			AnchorPoint = Vector2.new(0, 1), Position = UDim2.new(0, 14, 1, -12), Size = UDim2.new(1, -28, 0, 34), TextSize = 12.5, FontFace = Theme.fontHeavy,
+			Text = if owned then "✓  " .. spaced("owned") else spaced("buy"), TextColor3 = if owned then Theme.success else WHITE,
+			BackgroundColor3 = if owned then Theme.surfaceRaised else hex("#0a0a0a"), BackgroundTransparency = 0, Parent = tile,
+		}, { corner(7) })
+		if not owned then
+			local border = stroke(WHITE, 1.5, 0)
+			border.Parent = buy
+			table.insert(ringGradients, { g = new("UIGradient", { Parent = border }) })
+			buy.Activated:Connect(function()
+				if pass.id == 0 then
+					toast("This game pass isn't on sale yet")
+					return
+				end
+				MarketplaceService:PromptGamePassPurchase(player, pass.id)
+			end)
+		end
+	end
+
+	spacer(col, 30, o())
+	sectionTitle(col, "Card skins", o())
+	eyebrow(col, "how your number card looks once the rarity drops", o(), Theme.prose2)
+	spacer(col, 12, o())
+	local skinGrid = frame({ Size = UDim2.new(1, 0, 0, 0), AutomaticSize = AUTO_Y, LayoutOrder = o(), Parent = col }, {
+		new("UIGridLayout", { CellSize = UDim2.new(1 / 3, -8, 0, 186), CellPadding = UDim2.fromOffset(12, 12), SortOrder = Enum.SortOrder.LayoutOrder }),
+	})
+	for i, skin in Shop.skins do
+		local unlocked = skinUnlocked(skin)
+		local equipped = (profile.skin or "default") == skin.key
+		local tile = frame({ BackgroundColor3 = Theme.surface, BackgroundTransparency = 0, LayoutOrder = i, Parent = skinGrid }, {
+			corner(10), stroke(if equipped then Theme.prose2 else Theme.outline, 1, 0),
+		})
+		local preview = frame({ Position = UDim2.fromOffset(0, 16), Size = UDim2.new(1, 0, 0, 50), Parent = tile }, { list(H, 0, CENTER, MIDDLE) })
+		numCard("777777", "epic", 26, 3, 12, skin.key).Parent = preview
+		text({ Position = UDim2.fromOffset(10, 76), Size = UDim2.new(1, -20, 0, 20), Text = spaced(skin.name), TextSize = 13, FontFace = Theme.fontHeavy, Parent = tile })
+		local requirement = if unlocked then skin.desc
+			elseif not skin.achievement then `{Shop.byKey[skin.pass].name} game pass only.`
+			else `Unlock with the {Shop.achievementsByKey[skin.achievement].name} achievement or the {Shop.byKey[skin.pass].name} pass.`
+		text({ Position = UDim2.fromOffset(10, 98), Size = UDim2.new(1, -20, 0, 42), Text = requirement, TextWrapped = true, TextSize = 11.5, TextColor3 = Theme.prose3, TextYAlignment = Enum.TextYAlignment.Top, Parent = tile })
+		local equip = tbutton({
+			AnchorPoint = Vector2.new(0.5, 1), Position = UDim2.new(0.5, 0, 1, -10), Size = UDim2.new(1, -20, 0, 30), TextSize = 11.5, FontFace = Theme.fontHeavy,
+			Text = if equipped then "✓  " .. spaced("equipped") elseif unlocked then spaced("equip") else "🔒  " .. spaced("locked"),
+			TextColor3 = if equipped then Theme.success elseif unlocked then BLACK else Theme.prose3,
+			BackgroundColor3 = if unlocked and not equipped then Theme.prose else Theme.surfaceRaised, BackgroundTransparency = 0, Parent = tile,
+		}, { corner(6) })
+		if unlocked and not equipped then
+			equip.Activated:Connect(function()
+				local ok, res = pcall(SetSkinFn.InvokeServer, SetSkinFn, skin.key)
+				if ok and res then
+					profile.skin = skin.key
+					renderShop()
+				else
+					toast("Couldn't equip this skin")
+				end
+			end)
+		end
+	end
+end
+
 ---------------------------------------------------------------------- navigation et tirage
-local PAGES = { home = renderHome, history = renderHistory, stats = renderStats, badges = renderBadges, leaderboard = renderLeaderboard }
+local PAGES = { home = renderHome, history = renderHistory, stats = renderStats, badges = renderBadges, leaderboard = renderLeaderboard, shop = renderShop }
 
 function navigate(name)
 	if isLocked() then return end
@@ -1382,10 +1590,11 @@ local feedOrder = 0
 FeedEvent.OnClientEvent:Connect(function(e)
 	local t = Theme.tier[e.tier]
 	feedOrder += 1
+	local who = (if e.global then "🌍 " else "") .. (if e.vip then '<font color="#fbbf24"><b>👑 ' .. e.name .. "</b></font>" else "<b>" .. e.name .. "</b>")
 	local item = text({
 		Size = UDim2.fromOffset(250, 0), AutomaticSize = AUTO_Y, BackgroundColor3 = Theme.surfaceDim, BackgroundTransparency = 0.05, RichText = true, TextWrapped = true,
 		TextXAlignment = Enum.TextXAlignment.Left, TextSize = 12, TextColor3 = Theme.prose2, LayoutOrder = feedOrder, Parent = feed,
-		Text = `<b>{e.name}</b> rolled <font face="RobotoMono" color="#f0f0f0"><b>{e.n}</b></font>\n<font color="#{t.text:ToHex()}"><b>{string.upper(e.tier)}</b></font> · {fmt(e.ep)} EP`,
+		Text = `{who} rolled <font face="RobotoMono" color="#f0f0f0"><b>{e.n}</b></font>\n<font color="#{t.text:ToHex()}"><b>{string.upper(e.tier)}</b></font> · {fmt(e.ep)} EP`,
 	}, { corner(8), stroke(Theme.outline:Lerp(t.border, 0.6)), padding(6, 10) })
 	local items = {}
 	for _, c in feed:GetChildren() do
@@ -1404,12 +1613,28 @@ FeedEvent.OnClientEvent:Connect(function(e)
 		local channels = TextChatService:FindFirstChild("TextChannels")
 		local system = channels and channels:FindFirstChild("RBXSystem")
 		if system then
-			system:DisplaySystemMessage(`<font color="#{t.text:ToHex()}">🎲 {e.name} rolled {e.n} — {string.upper(e.tier)} ({fmt(e.ep)} EP)</font>`)
+			system:DisplaySystemMessage(`<font color="#{t.text:ToHex()}">🎲 {if e.global then "🌍 " else ""}{e.name} rolled {e.n} — {string.upper(e.tier)} ({fmt(e.ep)} EP)</font>`)
 		end
 	end
 end)
 
 NoticeEvent.OnClientEvent:Connect(toast)
+
+-- Tag [VIP] devant les messages des détenteurs du game pass.
+TextChatService.OnIncomingMessage = function(message)
+	local props = Instance.new("TextChatMessageProperties")
+	local source = message.TextSource
+	local sender = source and Players:GetPlayerByUserId(source.UserId)
+	if sender and sender:GetAttribute("Pass_VIP") then
+		props.PrefixText = '<font color="#fbbf24">[VIP]</font> ' .. message.PrefixText
+	end
+	return props
+end
+
+-- Achat d'un game pass pendant la partie : la boutique se redessine si elle est ouverte.
+player.AttributeChanged:Connect(function(name)
+	if string.sub(name, 1, 5) == "Pass_" and currentPage and currentPage.name == "shop" then navigate("shop") end
+end)
 
 ---------------------------------------------------------------------- démarrage
 renderHome()
@@ -1418,6 +1643,8 @@ task.spawn(function()
 		local ok, p = pcall(ProfileFn.InvokeServer, ProfileFn)
 		if ok and p then
 			profile = p
+			profile.ach = profile.ach or {}
+			profile.skin = profile.skin or "default"
 			if currentPage and currentPage.name == "home" and not session then renderHome() end
 			return
 		end

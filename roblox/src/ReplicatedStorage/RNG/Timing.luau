@@ -1,6 +1,7 @@
 --[[
-	RNG∞ — rythme de la révélation, repris de js/app.js (vitesse « normal » du site).
+	RNG∞ — rythme de la révélation, repris de js/app.js.
 	Partagé par le client (animation) et le serveur (pas de nouveau tirage avant l'affichage de la rareté).
+	normal = vitesse « normal » du site ; fast = game pass Fast Roll (environ deux fois plus rapide).
 ]]
 local Timing = {}
 
@@ -11,9 +12,12 @@ local R = {
 	summary = 1500, rarity = 1000, stats = 250, lifetimeShow = 1000, lifetimePause = 1500, lifetimeTick = 1500, finish = 500,
 }
 Timing.REVEAL = R
--- Les chiffres gardent le rythme d'origine ; arrivée des badges ×0.85 ; fin de séquence ×0.6.
-Timing.BADGES = 0.85
-Timing.BASE = 0.6
+
+-- Facteurs appliqués aux durées : chiffres, arrivée des badges, fin de séquence.
+Timing.SPEEDS = {
+	normal = { digits = 1, badges = 0.85, base = 0.6 },
+	fast = { digits = 0.45, badges = 0.4, base = 0.35 },
+}
 
 -- Chaque chiffre suivant se fait attendre un peu plus ; idem pour les badges, jusqu'au plus rare.
 local function digitDelay(i, count)
@@ -24,29 +28,30 @@ local function badgeDelay(i, count)
 	return R.badgeBase + (R.badgeMax - R.badgeBase) * (i / (count - 1)) ^ 1.5
 end
 
--- Instant (secondes depuis le début du tirage) de chaque étape.
--- slotCount : cases de chiffres (6 minimum) ; groupCount : badges qui comptent (sous-badges regroupés).
-function Timing.schedule(slotCount, groupCount)
+-- Instant (secondes depuis le début du tirage) de chaque étape, et durées des compteurs.
+-- slotCount : cases de chiffres (6 minimum) ; groupCount : badges qui comptent ; speed : "normal" ou "fast".
+function Timing.schedule(slotCount, groupCount, speed)
+	local f = Timing.SPEEDS[speed or "normal"] or Timing.SPEEDS.normal
 	local clock = 0
 	local function step(ms, factor)
 		clock += ms * factor
 		return clock / 1000
 	end
-	local s = { digits = {}, badges = {} }
-	s.digits[1] = step(R.digitStart, 1)
+	local s = { digits = {}, badges = {}, badgeEp = R.badgeEp * f.badges / 1000, lifetimeTick = R.lifetimeTick * f.base / 1000 }
+	s.digits[1] = step(R.digitStart, f.digits)
 	for i = 1, slotCount - 1 do
-		s.digits[i + 1] = step(digitDelay(i - 1, slotCount), 1)
+		s.digits[i + 1] = step(digitDelay(i - 1, slotCount), f.digits)
 	end
-	s.spinStop = step(0, Timing.BASE)
+	s.spinStop = step(0, f.base)
 	for i = 0, groupCount - 1 do
-		s.badges[i + 1] = step(if i == 0 then R.badgeStart else badgeDelay(i - 1, groupCount), Timing.BADGES)
+		s.badges[i + 1] = step(if i == 0 then R.badgeStart else badgeDelay(i - 1, groupCount), f.badges)
 	end
-	s.summary = step(R.summary, Timing.BASE)
-	s.rarity = step(R.rarity, Timing.BASE)
-	s.stats = step(R.stats, Timing.BASE)
-	s.lifetimeShow = step(R.lifetimeShow, Timing.BASE)
-	s.lifetimePause = step(R.lifetimePause, Timing.BASE)
-	s.finish = step(R.lifetimeTick + R.finish, Timing.BASE)
+	s.summary = step(R.summary, f.base)
+	s.rarity = step(R.rarity, f.base)
+	s.stats = step(R.stats, f.base)
+	s.lifetimeShow = step(R.lifetimeShow, f.base)
+	s.lifetimePause = step(R.lifetimePause, f.base)
+	s.finish = step(R.lifetimeTick + R.finish, f.base)
 	return s
 end
 
