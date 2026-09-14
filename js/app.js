@@ -12,7 +12,13 @@
     badgeStart: 1000, badgeBase: 500, badgeMax: 1500, badgeEp: 500,
     summary: 1500, rarity: 1000, stats: 250, lifetimeShow: 1000, lifetimePause: 1500, lifetimeTick: 1500, end: 500,
   };
-  const SPEEDS = { dramatic: 1, normal: 0.6, fast: 0.25, instant: 0 };
+  // base : chiffres et fin de séquence ; badges : arrivée des badges (volontairement moins accélérée).
+  const SPEEDS = {
+    dramatic: { base: 1, badges: 1 },
+    normal: { base: 0.6, badges: 0.85 },
+    fast: { base: 0.25, badges: 0.35 },
+    instant: { base: 0, badges: 0 },
+  };
   const SPEED_LABELS = { dramatic: 'original', normal: 'normal', fast: 'fast', instant: 'instant' };
   // Chaque chiffre suivant se fait attendre un peu plus ; idem pour les badges, jusqu'au plus rare.
   const digitDelay = (i, count) => REVEAL.digitBase + (REVEAL.digitMax - REVEAL.digitBase) * Math.pow(i / (count - 1), 2);
@@ -571,7 +577,8 @@
   function playReveal(ctx) {
     currentView = 'result';
     const { n, a } = ctx;
-    const k = SPEEDS[Store.settings.speed] ?? SPEEDS.normal;
+    const speed = SPEEDS[Store.settings.speed] || SPEEDS.normal;
+    const k = speed.base, kb = speed.badges;
     const slotCount = Math.max(6, a.str.length);
     const padded = a.str.padStart(slotCount, '0');
     const lead = slotCount - a.str.length;
@@ -612,7 +619,7 @@
     const steps = [];
     const timers = [];
     let clock = 0, revealed = 0, running = 0, finished = false, canReroll = false;
-    const step = (delay, run) => { clock += delay * k; steps.push({ at: clock, run, done: false }); };
+    const step = (delay, run, factor = k) => { clock += delay * factor; steps.push({ at: clock, run, done: false }); };
     const show = (el, cls) => { el.classList.remove('invisible'); if (cls && !reducedMotion) el.classList.add(cls); };
 
     const spin = setInterval(() => {
@@ -646,8 +653,8 @@
         $('#r-list').insertAdjacentHTML('afterbegin', badgeCardHTML(g, n, { newIds: ctx.newIds, animate: !quick && !reducedMotion, delay: 0 }));
         const from = running;
         running += g.badge.score;
-        countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * k, v => `${fmt(v)} EP`);
-      });
+        countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * kb, v => `${fmt(v)} EP`);
+      }, kb);
     });
 
     // 3. Résumé, rareté, TOP x %, EP à vie.

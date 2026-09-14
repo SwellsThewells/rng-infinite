@@ -533,7 +533,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   background: var(--surface);
   box-shadow: var(--t-glow, none);
 }
-.badge-card.reveal { animation: cardin .35s ease-out both; }
+.badge-card.reveal { animation: cardin .45s ease-out both; }
 @keyframes cardin { from { opacity: 0; transform: translateY(-20px) scale(.98); } to { opacity: 1; transform: none; } }
 .badge-head { display: flex; align-items: flex-start; justify-content: space-between; gap: .5rem; }
 .badge-title { display: flex; align-items: center; flex-wrap: wrap; gap: .45rem; min-width: 0; }
