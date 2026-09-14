@@ -5,12 +5,12 @@ Chaque tirage donne un nombre entre 0 et 1 000 000, analysé par 233 badges (pal
 
 ## Ce qu'il y a en plus de l'original
 
-- Tirages illimités (touche **Espace** pour relancer, clic sur la carte pour sauter l'animation)
+- Tirages illimités (touche **Espace** pour relancer) ; les chiffres tournent au rythme d'origine et ne se sautent pas
 - **Historique** complet : recherche par nombre ou badge, filtre par rareté, tri par EP
 - **Stats** : distribution des raretés vs cotes attendues, EP par tirage, fréquence des chiffres, séries sans Rare
 - **Collection** des 233 badges avec compteur, premier tirage et cote de chaque badge
 - Nombres déjà tirés signalés, badges nouveaux marqués **NEW**
-- Export / import JSON de l'historique, 4 vitesses d'animation, thème clair/sombre
+- Export / import JSON de l'historique, 3 vitesses pour l'arrivée des badges, thème clair/sombre
 
 ## Fidélité au jeu d'origine
 

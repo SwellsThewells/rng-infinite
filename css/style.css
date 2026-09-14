@@ -452,6 +452,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 .float-up { animation: floatup 1.8s ease-out both; }
 @keyframes floatup { 0% { opacity: 0; transform: translateY(4px); } 20% { opacity: 1; } 100% { opacity: 0; transform: translateY(-14px); } }
 .badge-group { display: flex; flex-direction: column; gap: .35rem; }
+body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacity: .45; }
 @media (prefers-reduced-motion: reduce) {
   .num-card.charging, .num-card.reveal-pulse, .pop-in, .float-up { animation: none; }
   .vignette { transition: none; }

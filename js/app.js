@@ -12,14 +12,14 @@
     badgeStart: 1000, badgeBase: 500, badgeMax: 1500, badgeEp: 500,
     summary: 1500, rarity: 1000, stats: 250, lifetimeShow: 1000, lifetimePause: 1500, lifetimeTick: 1500, end: 500,
   };
-  // base : chiffres et fin de séquence ; badges : arrivée des badges (volontairement moins accélérée).
+  // Les chiffres tournent toujours au rythme d'origine et ne se sautent pas.
+  // badges : arrivée des badges ; base : fin de séquence (rareté, EP à vie).
   const SPEEDS = {
-    dramatic: { base: 1, badges: 1 },
-    normal: { base: 0.6, badges: 0.85 },
-    fast: { base: 0.25, badges: 0.35 },
-    instant: { base: 0, badges: 0 },
+    dramatic: { badges: 1, base: 1 },
+    normal: { badges: 0.85, base: 0.6 },
+    fast: { badges: 0.35, base: 0.25 },
   };
-  const SPEED_LABELS = { dramatic: 'original', normal: 'normal', fast: 'fast', instant: 'instant' };
+  const SPEED_LABELS = { dramatic: 'original', normal: 'normal', fast: 'fast' };
   // Chaque chiffre suivant se fait attendre un peu plus ; idem pour les badges, jusqu'au plus rare.
   const digitDelay = (i, count) => REVEAL.digitBase + (REVEAL.digitMax - REVEAL.digitBase) * Math.pow(i / (count - 1), 2);
   const badgeDelay = (i, count) => (count <= 1 ? REVEAL.badgeBase
@@ -50,6 +50,13 @@
   const SUP = { 0: '⁰', 1: '¹', 2: '²', 3: '³', 4: '⁴', 5: '⁵', 6: '⁶', 7: '⁷', 8: '⁸', 9: '⁹' };
   const sup = k => String(k).split('').map(ch => SUP[ch]).join('');
   const tierPill = tier => `<span class="pill" data-tier="${tier}">${tier}</span>`;
+
+  // "Top x %" / "Bottom x %" arrondi et coloré selon le percentile, comme l'écran de résultat d'origine.
+  function percentileHTML(p) {
+    const text = p >= 50 ? `Top ${Math.round(100 - p) || '<1'}%` : `Bottom ${Math.round(p) || '<1'}%`;
+    const color = p >= 95 ? '#eab308' : p >= 80 ? '#22c55e' : p >= 50 ? '#10b981' : p >= 20 ? '#f97316' : '#ef4444';
+    return `<span class="top" style="color:${color}">${text}</span>`;
+  }
 
   function relTime(t) {
     const s = (Date.now() - t) / 1000;
@@ -216,7 +223,6 @@
   }
 
   function shareText(a) {
-    const top = Engine.topLabel(a.percentile);
     const lines = [`RNG∞ 🎲 ${a.str}`, '', `${TIER_EMOJI[a.tier]} ${a.tier.toUpperCase()}${top ? ' • ' + cap(top.toLowerCase()) : ''}`, ''];
     a.groups.slice(0, 3).forEach(g => lines.push(`${TIER_EMOJI[g.badge.tier]} ${g.badge.emoji} ${g.badge.label}`));
     if (a.groups.length > 3) lines.push(`+${a.groups.length - 3} more`);
@@ -367,12 +373,11 @@
     Collection.ensure();
     const a = analysis(r[0]);
     const occ = Collection.seen.get(r[0]) || [];
-    const top = Engine.topLabel(a.percentile);
     openModal(`
       <div class="result" data-tier="${a.tier}" style="padding-top:.2rem">
         <div class="eyebrow">Roll #${fmt(index + 1)} · ${fullDate(r[2])}</div>
         <div style="margin-top:.9rem"><span class="num-card lg" data-tier="${a.tier}">${a.str}</span></div>
-        <div class="result-meta">${tierPill(a.tier)}${top ? `<span class="dot">•</span><span class="top">${top}</span>` : ''}</div>
+        <div class="result-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
         <div class="ep-big">${fmt(a.total)} EP</div>
         ${occ.length > 1 ? `<p class="repeat-note">Rolled ${occ.length}× in your history: ${occ.map(i => `<a href="javascript:void 0" data-roll="${i}">#${fmt(i + 1)}</a>`).join(', ')}</p>` : ''}
         <div class="result-actions"><button class="btn" data-share>${shareIcon()} Share</button></div>
@@ -423,7 +428,7 @@
         <input class="input" id="set-name" maxlength="20" autocomplete="off" value="${esc(Store.player.name)}" placeholder="Player">
         <span class="panel-note">Used on the leaderboard once it goes online.</span>
       </div>
-      <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal', 'fast', 'instant'], s.speed, SPEED_LABELS)}</div>
+      <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal', 'fast'], SPEEDS[s.speed] ? s.speed : 'normal', SPEED_LABELS)}</div>
       <div class="field"><label>Theme</label>${seg('theme', ['light', 'system', 'dark'], s.theme)}</div>
       <div class="danger-zone">
         <button class="btn" id="set-export">Export history</button>
@@ -582,17 +587,16 @@
     const slotCount = Math.max(6, a.str.length);
     const padded = a.str.padStart(slotCount, '0');
     const lead = slotCount - a.str.length;
-    const top = Engine.topLabel(a.percentile);
     const ascending = a.groups.slice().reverse();
 
     app.innerHTML = `
       <div class="vignette" id="r-vignette"></div>
       <div class="page">
         <section class="result" data-tier="${a.tier}">
-          <div class="num-card lg neutral charging" id="num-card" title="Click to skip">
+          <div class="num-card lg neutral charging" id="num-card">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
           </div>
-          <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}${top ? `<span class="dot">•</span><span class="top">${top}</span>` : ''}</div>
+          <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
           <div class="ep-big pending" id="r-ep">??? EP</div>
           <div class="lifetime invisible" id="r-life">
             <div class="lifetime-row"><span class="v" id="r-life-v">${fmt(ctx.lifetimeBefore)}</span><span class="delta" id="r-life-delta" hidden>+${fmt(a.total)}</span></div>
@@ -602,7 +606,7 @@
             <button class="btn" id="r-share">${shareIcon()} Share</button>
             <button class="btn-roll small" id="r-again">Roll again</button>
           </div>
-          <p class="hint" id="r-hint">click the number or press <kbd>Space</kbd> to skip</p>
+          <p class="hint invisible" id="r-hint">click the number or press <kbd>Space</kbd> to speed up the badges</p>
           <div id="r-notes" style="text-align:center"></div>
           <section class="breakdown" id="r-breakdown" hidden>
             <h2 class="section-title">Badge breakdown</h2>
@@ -618,7 +622,7 @@
     const vignette = $('#r-vignette');
     const steps = [];
     const timers = [];
-    let clock = 0, revealed = 0, running = 0, finished = false, canReroll = false;
+    let clock = 0, revealed = 0, running = 0, finished = false, canReroll = false, digitsDone = false;
     const step = (delay, run, factor = k) => { clock += delay * factor; steps.push({ at: clock, run, done: false }); };
     const show = (el, cls) => { el.classList.remove('invisible'); if (cls && !reducedMotion) el.classList.add(cls); };
 
@@ -626,6 +630,8 @@
       for (let i = revealed; i < slotCount; i++) slots[i].textContent = String((Math.random() * 10) | 0);
     }, 55);
     requestAnimationFrame(() => vignette.classList.add('on'));
+    // Menu verrouillé tant que les chiffres tournent : on ne peut pas voir le nombre ailleurs avant la fin.
+    document.body.classList.add('locked');
 
     // 1. Chiffres de gauche à droite, chacun un peu plus lent que le précédent.
     const revealDigit = i => () => {
@@ -636,11 +642,14 @@
       if (i < lead) el.classList.add('ghost');
       revealed = i + 1;
     };
-    step(REVEAL.digitStart, revealDigit(0));
-    for (let i = 1; i < slotCount; i++) step(digitDelay(i - 1, slotCount), revealDigit(i));
+    step(REVEAL.digitStart, revealDigit(0), 1);
+    for (let i = 1; i < slotCount; i++) step(digitDelay(i - 1, slotCount), revealDigit(i), 1);
     step(0, quick => {
       clearInterval(spin);
       card.classList.remove('charging');
+      digitsDone = true;
+      document.body.classList.remove('locked');
+      show($('#r-hint'), 'fade-in');
       if (!lead) return;
       const collapse = () => slots.slice(0, lead).forEach(el => el.classList.add('collapsed'));
       if (quick) collapse(); else setTimeout(collapse, 260);
@@ -687,8 +696,9 @@
     });
 
     const runStep = (s, quick) => { if (!s.done) { s.done = true; s.run(quick); } };
+    // Accélère uniquement ce qui suit les chiffres.
     function skip() {
-      if (finished) return;
+      if (finished || !digitsDone) return;
       timers.forEach(clearTimeout);
       steps.forEach(s => runStep(s, true));
     }
@@ -697,14 +707,13 @@
     $('#r-share').addEventListener('click', () => share(a));
     $('#r-again').addEventListener('click', () => startRoll(true));
 
-    if (k === 0) skip();
-    else steps.forEach(s => timers.push(setTimeout(() => runStep(s, false), s.at)));
+    steps.forEach(s => timers.push(setTimeout(() => runStep(s, false), s.at)));
 
     return {
       get finished() { return finished; },
       get canReroll() { return canReroll; },
       skip,
-      cancel() { timers.forEach(clearTimeout); clearInterval(spin); finished = true; },
+      cancel() { timers.forEach(clearTimeout); clearInterval(spin); finished = true; document.body.classList.remove('locked'); },
     };
   }
 

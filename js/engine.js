@@ -723,8 +723,8 @@
 
     function topLabel(percentile) {
       const top = 100 - percentile;
-      if (top <= 50) return 'TOP ' + formatPct(top) + '%';
-      if (top > 90) return 'BOTTOM ' + formatPct(100 - top) + '%';
+      if (top <= 50) return 'TOP ' + Math.round(top) + '%';
+      if (top > 90) return 'BOTTOM ' + Math.round(100 - top) + '%';
       return null;
     }
 
