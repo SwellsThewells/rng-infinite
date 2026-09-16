@@ -4,6 +4,10 @@ Jeu de nombre aléatoire **sans limite quotidienne**, inspiré de [rngdle.com](h
 Chaque tirage donne un nombre entre 0 et 1 000 000, analysé par les 233 badges d'origine (palindromes, premiers, suites, nombres mèmes…) qui rapportent des EP,
 plus des badges perso définis dans `tools/source/custom.json` — pour l'instant **Drastix** 💥 : le nombre contient « 235 », 25 000 EP.
 
+**[Jouer →](https://sacha9214.github.io/rng-infinite/)**
+
+![Écran de tirage](docs/apercu.png)
+
 ## Ce qu'il y a en plus de l'original
 
 - Tirages illimités (touche **Espace** pour relancer) ; comme sur l'original, ni les chiffres ni les badges ne se sautent
@@ -47,3 +51,7 @@ node tools/stamp.mjs
 
 Les tirages étant illimités, le classement portera sur le **meilleur tirage** (jour / semaine / all-time) et non sur l'EP total.
 `player.id` et `player.name` sont déjà stockés localement pour ça.
+
+## Licence
+
+[MIT](LICENSE)
