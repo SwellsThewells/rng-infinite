@@ -1,57 +1,59 @@
 # RNG∞
 
-Jeu de nombre aléatoire **sans limite quotidienne**, inspiré de [rngdle.com](https://www.rngdle.com/).
-Chaque tirage donne un nombre entre 0 et 1 000 000, analysé par les 233 badges d'origine (palindromes, premiers, suites, nombres mèmes…) qui rapportent des EP,
-plus des badges perso définis dans `tools/source/custom.json` — pour l'instant **Drastix** 💥 : le nombre contient « 235 », 25 000 EP.
+A random number game with **no daily limit**, inspired by [rngdle.com](https://www.rngdle.com/).
+Each roll gives a number between 0 and 1,000,000, scored by the original game's 233 badges (palindromes, primes, sequences, meme numbers…) that award EP,
+plus custom badges defined in `tools/source/custom.json` — currently **Drastix** 💥: the number contains "235", 25,000 EP.
 
-**[Jouer →](https://sacha9214.github.io/rng-infinite/)**
+**[Play →](https://sacha9214.github.io/rng-infinite/)**
 
-![Écran de tirage](docs/apercu.png)
+![Roll screen](docs/apercu.png)
 
-## Ce qu'il y a en plus de l'original
+## What it adds to the original
 
-- Tirages illimités (touche **Espace** pour relancer) ; comme sur l'original, ni les chiffres ni les badges ne se sautent
-- **Historique** complet : recherche par nombre ou badge, filtre par rareté, tri par EP
-- **Stats** : distribution des raretés vs cotes attendues, EP par tirage, fréquence des chiffres, séries sans Rare
-- **Collection** des 233 badges avec compteur, premier tirage et cote de chaque badge
-- Nombres déjà tirés signalés, badges nouveaux marqués **NEW**
-- Export / import JSON de l'historique, 3 vitesses pour l'arrivée des badges, thème clair/sombre
+- Unlimited rolls (press **Space** to roll again); as in the original, neither the digits nor the badges can be skipped
+- Full **history**: search by number or badge, filter by rarity, sort by EP
+- **Stats**: rarity distribution vs. expected odds, EP per roll, digit frequency, streaks without a Rare
+- **Collection** of all 233 badges with a counter, first roll and odds for each badge
+- Previously rolled numbers are flagged, new badges are marked **NEW**
+- JSON export/import of the history, 3 badge reveal speeds, light/dark theme
 
-## Fidélité au jeu d'origine
+## Faithful to the original game
 
-Le moteur (`js/engine.js`) est réécrit, puis validé par `tools/build.mjs` :
+The engine (`js/engine.js`) is a rewrite, validated by `tools/build.mjs`:
 
-1. les 1 000 001 nombres possibles sont analysés, et le score de chaque badge dérivé de sa fréquence réelle
-   (`100 × 1 000 001 / nb de nombres`) doit égaler le score de référence → **233/233**
-2. les totaux EP de 96 vrais tirages relevés sur le leaderboard d'origine doivent tomber juste → **96/96**
+1. all 1,000,001 possible numbers are analyzed, and each badge's score is derived from its actual frequency
+   (`100 × 1,000,001 / number of matching numbers`); it must equal the reference score → **233/233**
+2. the EP totals of 96 real rolls taken from the original leaderboard must match exactly → **96/96**
 
-La table des percentiles (rareté de carte, « TOP x % ») est calculée sur la même énumération.
+The percentile table (card rarity, "TOP x %") is computed from the same enumeration.
 
-## Lancer
+A Roblox version of the game, with the same Luau-ported engine, lives in [`roblox/`](roblox/).
 
-Site statique, aucune dépendance :
+## Run locally
+
+Static site, no dependencies:
 
 ```bash
 python3 -m http.server 8123
 ```
 
-Regénérer les données après modification du moteur :
+Regenerate the data after changing the engine:
 
 ```bash
 node tools/build.mjs
 ```
 
-Avant chaque commit, versionner les CSS/JS pour contourner le cache de GitHub Pages :
+Before each commit, version the CSS/JS files to bust the GitHub Pages cache:
 
 ```bash
 node tools/stamp.mjs
 ```
 
-## Leaderboard (à venir)
+## Leaderboard (coming soon)
 
-Les tirages étant illimités, le classement portera sur le **meilleur tirage** (jour / semaine / all-time) et non sur l'EP total.
-`player.id` et `player.name` sont déjà stockés localement pour ça.
+Since rolls are unlimited, the leaderboard will rank the **best single roll** (day / week / all-time) rather than total EP.
+`player.id` and `player.name` are already stored locally for this.
 
-## Licence
+## License
 
 [MIT](LICENSE)
