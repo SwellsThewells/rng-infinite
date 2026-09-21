@@ -27,6 +27,31 @@
   const RIPPLE_FROM_CENTER = new Set(['MOUNTAIN', 'VALLEY']);
   const LABELS = new Map(Engine.badges.map(b => [b.id, b.label.toLowerCase()]));
 
+  // ---------------------------------------------------------------- serveur (classement en ligne, hébergé sur Vercel)
+  // Sur Vercel l'API est sur le même domaine ; depuis GitHub Pages on appelle le déploiement Vercel.
+  const API_BASE = location.hostname.endsWith('github.io') ? 'https://rng-infinite.vercel.app' : '';
+  const Online = {
+    async request(pathname, options = {}) {
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 6000);
+      try {
+        const res = await fetch(API_BASE + pathname, { ...options, signal: ctrl.signal, headers: { 'Content-Type': 'application/json' } });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) throw Object.assign(new Error(body.error || `HTTP ${res.status}`), { status: res.status });
+        return body;
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    roll() {
+      const p = Store.player;
+      return this.request('/api/roll', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name }) });
+    },
+    leaderboard(period) {
+      return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
+    },
+  };
+
   const app = document.getElementById('app');
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   let currentView = 'home';
@@ -553,6 +578,7 @@
             ${name ? `playing as <b>${esc(name)}</b> · ` : '<a href="javascript:void 0" id="pick-name">pick a name</a> · '}
             press <kbd>Space</kbd>
           </p>
+          <div id="today-slot"></div>
           ${best >= 0 ? featureCardHTML(best) : ''}
           ${recent.length > 1 ? `
             <div class="recent-strip">
@@ -564,6 +590,7 @@
     $('#roll-btn').addEventListener('click', startRoll);
     const pick = $('#pick-name');
     if (pick) pick.addEventListener('click', openSettings);
+    loadTodayCard($('#today-slot'));
   }
 
   function featureCardHTML(i) {
@@ -582,15 +609,97 @@
   }
 
   // ---------------------------------------------------------------- tirage
-  // Rien ne se saute : pendant la révélation, Espace est ignoré ; une fois la rareté affichée, il relance.
-  function startRoll(force) {
-    if (session && !session.finished) {
-      if (force !== true && !session.canReroll) return;
-      session.cancel();
+  function askName(then) {
+    openModal(`
+      <h2>Choose your player name</h2>
+      <p class="panel-note" style="margin:-.3rem 0 1rem">It appears on the leaderboard next to your best rolls.</p>
+      <form id="name-form">
+        <input class="input" id="name-input" maxlength="20" autocomplete="off" placeholder="Your name" style="width:100%">
+        <div class="actions"><button class="btn-roll small" type="submit">Save & roll</button></div>
+      </form>`, m => {
+      const input = m.querySelector('#name-input');
+      input.focus();
+      m.querySelector('#name-form').addEventListener('submit', e => {
+        e.preventDefault();
+        if (!input.value.trim()) { input.focus(); return; }
+        Store.setPlayerName(input.value);
+        closeModal();
+        then();
+      });
+    });
+  }
+
+  // Détail d'un nombre tiré par quelqu'un d'autre (classement, meilleur tirage du jour).
+  function openNumberModal(n, caption) {
+    const a = analysis(n);
+    openModal(`
+      <div class="result" data-tier="${a.tier}" style="padding-top:.2rem">
+        ${caption ? `<div class="eyebrow">${esc(caption)}</div>` : ''}
+        <div style="margin-top:.9rem"><span class="num-card lg" data-tier="${a.tier}">${a.str}</span></div>
+        <div class="result-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
+        <div class="ep-big">${fmt(a.total)} EP</div>
+        ${breakdownHTML(n, a)}
+      </div>`, m => animateDigits(m, { stagger: 120 }));
+  }
+
+  function todayCardHTML(entry, rollsToday) {
+    const a = analysis(entry.n);
+    const pills = a.groups.slice(0, 7).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('');
+    const more = a.earnedIds.length - Math.min(7, a.groups.length);
+    return `
+      <div class="feature-card" id="today-card" data-tier="${a.tier}" data-number="${entry.n}" data-caption="${esc(`Today's best · ${entry.name}`)}" style="cursor:pointer">
+        <div class="eyebrow">Today's best roll</div>
+        <span class="num-card md" data-tier="${a.tier}">${a.str}</span>
+        <div class="feature-meta">rolled by <b>${esc(entry.name)}</b>${entry.me ? ' (you)' : ''}</div>
+        <div class="pill-row">${pills}${more > 0 ? `<span class="more">+${more} more</span>` : ''}</div>
+        <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(entry.s)} EP</div>
+        <div class="feature-meta" style="margin-bottom:0">${plural(rollsToday, 'roll')} today</div>
+      </div>`;
+  }
+
+  // Remplit la carte "Today's best roll" ; si le serveur est injoignable, la carte disparaît sans bruit.
+  async function loadTodayCard(slot) {
+    try {
+      const data = await Online.leaderboard('day');
+      if (!slot.isConnected) return;
+      slot.innerHTML = data.entries.length
+        ? todayCardHTML(data.entries[0], data.rollsToday)
+        : '<div class="feature-card"><div class="eyebrow">Today\'s best roll</div><p class="feature-meta">No rolls yet today — be the first!</p></div>';
+    } catch (err) {
+      slot.innerHTML = '';
     }
+  }
+
+  // Le nombre est tiré par le serveur, ce qui le fait compter au classement. Si le serveur ne répond pas,
+  // on tire en local : le tirage reste dans l'historique mais pas au classement.
+  // Rien ne se saute : pendant la révélation, Espace est ignoré ; une fois la rareté affichée, il relance.
+  let rollPending = false;
+  async function startRoll(force) {
+    if (rollPending) return;
+    if (session && !session.finished && force !== true && !session.canReroll) return;
+    if (!Store.player.name) { askName(() => startRoll(force)); return; }
+    rollPending = true;
+    const buttons = Array.from(document.querySelectorAll('#roll-btn, #r-again'));
+    buttons.forEach(b => { b.disabled = true; });
+    let n, online = null;
+    try {
+      online = await Online.roll();
+      n = online.n;
+    } catch (err) {
+      if (err.status === 403) Store.resetIdentity();
+      if (err.status === 429 || err.status === 403) {
+        rollPending = false;
+        buttons.forEach(b => { b.disabled = false; });
+        toast(err.status === 429 ? 'Wait for the reveal to finish' : 'Player id reset, roll again');
+        return;
+      }
+      n = Engine.roll();
+      toast('Leaderboard offline: this roll stays on your device only');
+    }
+    rollPending = false;
+    if (session && !session.finished) session.cancel();
     closeModal();
     Collection.ensure();
-    const n = Engine.roll();
     const a = analysis(n);
     const previous = (Collection.seen.get(n) || []).slice();
     const newIds = new Set(a.earnedIds.filter(id => !Collection.badges.has(id)));
@@ -601,7 +710,7 @@
     const index = Store.rolls.length - 1;
     Collection.add(Store.rolls[index], index);
     if (!saved) toast('Could not save — storage is full. Export your history from the player menu.');
-    session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index });
+    session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index, online });
   }
 
   function notesHTML(ctx, a) {
@@ -615,6 +724,8 @@
       const lastIdx = ctx.previous[ctx.previous.length - 1];
       notes.push(`<p class="repeat-note">You've rolled <b class="mono">${a.str}</b> before — ${ctx.previous.length}× (last ${relTime(Store.rolls[lastIdx][2])}, <a href="javascript:void 0" data-roll="${lastIdx}">#${fmt(lastIdx + 1)}</a>)</p>`);
     }
+    if (!ctx.online) notes.push('<p class="repeat-note">Offline roll: not on the leaderboard</p>');
+    else if (ctx.online.bestToday) notes.push(`<p class="new-note">🏆 Your best roll today: #${ctx.online.dayRank} on <a href="#/leaderboard">today's leaderboard</a></p>`);
     return notes.join('');
   }
 
@@ -1121,27 +1232,68 @@
   }
 
   // ---------------------------------------------------------------- leaderboard / à propos
+  // Classement du meilleur tirage de chaque joueur (tirages illimités : l'EP total récompenserait juste le plus gros cliqueur).
+  const lbState = { period: 'day' };
+  let lbTimer = 0;
+
   function renderLeaderboard() {
     currentView = 'leaderboard';
     const name = Store.player.name;
+    const tabs = [['day', 'Today'], ['week', 'This week'], ['all', 'All-time']];
     app.innerHTML = `
       <div class="page">
         <h1 class="page-title">Leaderboard</h1>
-        <div class="panel soon">
-          <div class="big">🏆</div>
-          <h2 class="section-title" style="margin-top:.4rem">Online leaderboard — coming soon</h2>
-          <p class="muted" style="max-width:31rem;margin:.7rem auto 0;line-height:1.55">
-            Rolls are unlimited here, so the board will rank your <b>best single roll</b> (today, this week, all-time).
-            Ranking total EP would just reward whoever clicks the most.
-          </p>
-          <div class="result-actions"><button class="btn" id="lb-name">${name ? `Playing as ${esc(name)} · change` : 'Pick your player name'}</button></div>
+        <div id="today-slot"></div>
+        <div class="lb-card">
+          <div class="lb-tabs" role="tablist">${tabs.map(([k, l]) => `<button role="tab" data-period="${k}" class="${lbState.period === k ? 'on' : ''}">${l}</button>`).join('')}</div>
+          <div id="lb-list"><div class="empty">Loading…</div></div>
         </div>
-        <div class="panel">
-          <div class="panel-head"><h3 class="panel-title">Your personal top 10</h3><span class="panel-note">this device</span></div>
-          ${Store.rolls.length ? recordsHTML(topRollIndices(10)) : '<div class="empty" style="padding:1.5rem">No rolls yet.</div>'}
-        </div>
+        <p class="panel-note" style="text-align:center;margin-top:.9rem">
+          Best single roll per player · days reset at midnight UTC ·
+          ${name ? `playing as <b>${esc(name)}</b> · <a href="javascript:void 0" id="lb-name">change</a>` : '<a href="javascript:void 0" id="lb-name">pick a name</a>'}
+        </p>
       </div>`;
     $('#lb-name').addEventListener('click', openSettings);
+    $('.lb-tabs').addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      lbState.period = btn.dataset.period;
+      document.querySelectorAll('.lb-tabs button').forEach(b => b.classList.toggle('on', b === btn));
+      $('#lb-list').innerHTML = '<div class="empty">Loading…</div>';
+      drawLeaderboard();
+    });
+    loadTodayCard($('#today-slot'));
+    drawLeaderboard();
+  }
+
+  async function drawLeaderboard() {
+    clearTimeout(lbTimer);
+    const period = lbState.period;
+    let data;
+    try {
+      data = await Online.leaderboard(period);
+    } catch (err) {
+      if ($('#lb-list')) $('#lb-list').innerHTML = '<div class="empty">Leaderboard unavailable right now.</div>';
+      return;
+    }
+    if (currentView !== 'leaderboard' || period !== lbState.period || !$('#lb-list')) return;
+    const when = { day: 'today', week: 'this week', all: 'yet' }[period];
+    $('#lb-list').innerHTML = data.entries.length
+      ? data.entries.map(lbRowHTML).join('') + (data.mine ? `<div class="lb-gap">···</div>${lbRowHTML(data.mine)}` : '')
+      : `<div class="empty">No rolls ${when}, be the first!</div>`;
+    lbTimer = setTimeout(() => { if (currentView === 'leaderboard') drawLeaderboard(); }, 30000);
+  }
+
+  function lbRowHTML(e) {
+    const a = analysis(e.n);
+    const medal = { 1: '🥇', 2: '🥈', 3: '🥉' }[e.rank];
+    return `
+      <div class="lb-row${e.me ? ' me' : ''}" data-number="${e.n}" data-caption="${esc(`#${e.rank} · ${e.name} · ${relTime(e.t)}`)}">
+        <span class="lb-rank">${medal || '#' + e.rank}</span>
+        <span class="lb-name">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</span>
+        <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
+        <span class="lb-ep mono">${fmt(e.s)} EP</span>
+      </div>`;
   }
 
   function renderAbout() {
@@ -1165,7 +1317,8 @@
         <p>A badge is worth <span class="mono">100 × 1,000,001 ÷ (numbers that earn it)</span> EP, so a badge earned by 1 number in 1,000 is worth about 100,000 EP. Related badges form a family (e.g. Pair → Two Pair → Three Pair); only the best badge of a family counts toward your total.</p>
         <div class="rarity-table">${badgeRows.map(([t, l]) => `${tierPill(t)}<span>${l}</span>`).join('')}</div>
         <h2 class="panel-title">Your data</h2>
-        <p>History stays in this browser. Use the player menu to export it (JSON) or move it to another device.</p>
+        <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
+        <p>Your full history stays in this browser. Use the player menu to export it (JSON) or move it to another device.</p>
         <p class="muted">Inspired by the daily game rngdle.com — this version removes the daily limit and adds history and stats.</p>
         <p><a class="btn" href="#/">Go roll</a></p>
       </div>`;
@@ -1177,6 +1330,7 @@
   function route() {
     if (session && !session.finished) session.cancel();
     FX.clear();
+    clearTimeout(lbTimer);
     closeModal();
     tip.hidden = true;
     const key = location.hash.replace(/^#\/?/, '').split('?')[0];
@@ -1207,6 +1361,8 @@
   document.addEventListener('click', e => {
     const badge = e.target.closest('[data-badge]');
     if (badge) { e.preventDefault(); openBadgeModal(badge.dataset.badge); return; }
+    const number = e.target.closest('[data-number]');
+    if (number) { e.preventDefault(); openNumberModal(Number(number.dataset.number), number.dataset.caption || ''); return; }
     const roll = e.target.closest('[data-roll]');
     if (roll) { e.preventDefault(); openRollModal(Number(roll.dataset.roll)); }
   });

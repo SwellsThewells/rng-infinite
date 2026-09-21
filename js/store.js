@@ -17,7 +17,8 @@
   function defaults() {
     return {
       version: 1,
-      player: { id: uid(), name: '' },
+      // secret : prouve au serveur que c'est bien ce navigateur qui tire sous cet identifiant.
+      player: { id: uid(), secret: uid() + uid(), name: '' },
       settings: { speed: 'normal', theme: 'system', sound: false },
       scoreVersion: null,
       rolls: [],
@@ -86,6 +87,13 @@
       this.state.settings[key] = value;
       this.save();
       this.emit();
+    },
+
+    // Nouvel identifiant si l'ancien est réservé sur le serveur par un autre secret (ex. données effacées).
+    resetIdentity() {
+      this.state.player.id = uid();
+      this.state.player.secret = uid() + uid();
+      this.save();
     },
 
     // Recalcule l'EP stocké de chaque tirage quand la version des scores change.

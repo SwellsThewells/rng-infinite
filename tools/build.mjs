@@ -127,4 +127,9 @@ fs.writeFileSync(path.join(ROOT, 'js/percentiles.js'),
   'window.SCORE_STATS = ' + JSON.stringify({ mean: avg, median: sorted[Math.floor(SPAN / 2)], meanPct }) + ';\n' +
   'window.DIGIT_ODDS = ' + JSON.stringify(digitOdds) + ';\n');
 
+// Mêmes données pour les fonctions serveur de Vercel (/api), qui recalculent l'EP de chaque tirage.
+fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true });
+fs.writeFileSync(path.join(ROOT, 'data/badge-meta.json'), JSON.stringify(BADGE_META));
+fs.writeFileSync(path.join(ROOT, 'data/percentiles.json'), JSON.stringify(table));
+
 if (mismatches || knownOk !== Object.keys(KNOWN).length) process.exitCode = 1;

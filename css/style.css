@@ -717,6 +717,36 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 .step b { text-transform: uppercase; letter-spacing: .04em; }
 .rarity-table { display: grid; grid-template-columns: auto 1fr; gap: .45rem .9rem; align-items: center; margin: .8rem 0 1.6rem; font-size: .8rem; color: var(--prose-2); }
 .soon { text-align: center; padding: 2.4rem 1rem 1rem; }
+
+/* classement en ligne */
+#today-slot .feature-card { margin-top: 1.8rem; }
+.lb-card { margin-top: 1.4rem; border: 1px solid var(--outline); border-radius: .6rem; background: var(--surface); overflow: hidden; }
+.lb-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--outline); }
+.lb-tabs button {
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  padding: .85rem .5rem;
+  font-size: .72rem;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--prose-3);
+}
+.lb-tabs button.on { color: var(--prose); border-bottom-color: var(--prose); }
+.lb-row { display: grid; grid-template-columns: 2.6rem 1fr auto 8rem; align-items: center; gap: .75rem; padding: .7rem 1rem; border-top: 1px solid var(--outline); cursor: pointer; }
+.lb-row:first-child { border-top: 0; }
+.lb-row:hover { background: var(--surface-dim); }
+.lb-row.me { background: color-mix(in srgb, var(--chart-accent) 9%, transparent); }
+.lb-rank { font-family: var(--font-mono); font-weight: 700; font-size: .85rem; color: var(--prose-2); }
+.lb-name { font-weight: 800; font-size: .9rem; letter-spacing: .03em; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb-name .muted { font-weight: 500; text-transform: none; }
+.lb-ep { font-size: .78rem; color: var(--prose-3); text-align: right; white-space: nowrap; }
+.lb-gap { text-align: center; color: var(--prose-3); padding: .2rem; border-top: 1px solid var(--outline); }
+@media (max-width: 560px) {
+  .lb-row { grid-template-columns: 2.1rem 1fr auto; }
+  .lb-ep { grid-column: 2 / 4; text-align: left; margin-top: -.45rem; }
+}
 .soon .big { font-size: 2.6rem; }
 
 /* ------------------------------------------------------------------ modale / toast / effets */
