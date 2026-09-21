@@ -33,10 +33,10 @@ module.exports = async (req, res) => {
     ]);
 
     // Historique trié par date ; le meilleur tirage all-time y est ajouté s'il date d'avant l'historique serveur.
-    const seen = new Set(members);
+    // Comparé par nombre seul : un vieux tirage envoyé par l'appareil porte l'heure de l'appareil, pas celle du serveur.
     if (bestAll) {
       const d = JSON.parse(bestAll);
-      if (!seen.has(`${d.t}:${d.n}`)) members.push(`${d.t}:${d.n}`);
+      if (!members.some(m => m.endsWith(`:${d.n}`))) members.push(`${d.t}:${d.n}`);
     }
     const rolls = members.map(m => m.split(':').map(Number)).sort((a, b) => a[0] - b[0]);
 

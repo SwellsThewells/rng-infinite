@@ -244,6 +244,11 @@ assert.equal(r.body.name, 'Émile');
 assert.equal(r.body.rolls, 1);
 assert.equal(r.body.best[0].n, 777777);
 assert.equal(r.body.rank, null);
+// Le même tirage envoyé plus tard par l'appareil (heure de l'appareil ≠ heure du serveur) n'est pas compté deux fois.
+run([['ZADD', `hist:${legacy}`, t0 + 4000, `${t0 + 4000}:777777`]]);
+r = await call(profile, { url: '/api/profile?name=Emile' });
+assert.equal(r.body.rolls, 1);
+assert.deepEqual(r.body.best.map(x => x.n), [777777]);
 assert.equal((await call(profile, { url: '/api/profile?name=Nobody' })).status, 404);
 assert.equal((await call(profile, { url: '/api/profile' })).status, 400);
 assert.equal((await call(profile, { method: 'POST' })).status, 405);
