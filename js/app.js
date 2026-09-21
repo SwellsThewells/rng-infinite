@@ -295,7 +295,9 @@
   }
 
   function shareText(a) {
-    const lines = [`RNG∞ 🎲 ${a.str}`, '', `${TIER_EMOJI[a.tier]} ${a.tier.toUpperCase()}${top ? ' • ' + cap(top.toLowerCase()) : ''}`, ''];
+    // "rank" et pas "top" : dans le navigateur, "top" nu désigne window.top.
+    const rank = Engine.topLabel(a.percentile);
+    const lines = [`RNG∞ 🎲 ${a.str}`, '', `${TIER_EMOJI[a.tier]} ${a.tier.toUpperCase()}${rank ? ' • ' + cap(rank.toLowerCase()) : ''}`, ''];
     a.groups.slice(0, 3).forEach(g => lines.push(`${TIER_EMOJI[g.badge.tier]} ${g.badge.emoji} ${g.badge.label}`));
     if (a.groups.length > 3) lines.push(`+${a.groups.length - 3} more`);
     lines.push('', `${fmt(a.total)} EP`, location.origin + location.pathname);
@@ -313,7 +315,13 @@
       await navigator.clipboard.writeText(text);
       toast('Copied to clipboard');
     } catch (e) {
-      openModal(`<h2>Share</h2><textarea class="input" style="width:100%;height:12rem;padding:.6rem;font-family:var(--font-mono)" readonly>${esc(text)}</textarea>`);
+      // Presse-papiers refusé par le navigateur : on montre le texte déjà sélectionné, prêt à copier.
+      openModal(`<h2>Share</h2><p class="panel-note" style="margin:-.3rem 0 .6rem">Copy this text (Cmd/Ctrl + C) and paste it anywhere.</p>
+        <textarea class="input" style="width:100%;height:12rem;padding:.6rem;font-family:var(--font-mono)" readonly>${esc(text)}</textarea>`, m => {
+        const area = m.querySelector('textarea');
+        area.focus();
+        area.select();
+      });
     }
   }
 
