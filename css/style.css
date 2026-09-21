@@ -744,7 +744,10 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 .lb-rolls { font-size: .78rem; color: var(--prose-2); text-align: right; white-space: nowrap; }
 
 /* connexion Google */
-.google-btn { min-height: 44px; display: flex; align-items: center; }
+/* L'iframe de Google est en color-scheme clair : si la page est en sombre, le navigateur lui peint un fond blanc opaque.
+   Déclarer le cadre en clair aligne les deux et rend le fond transparent (le bouton garde son thème sombre). */
+.google-btn { min-height: 44px; display: flex; align-items: center; color-scheme: light; }
+.google-btn iframe { color-scheme: light; }
 .google-row { display: flex; align-items: center; justify-content: space-between; gap: .6rem; flex-wrap: wrap; font-size: .8rem; }
 .or-google { display: flex; flex-direction: column; align-items: center; gap: .55rem; margin-top: 1.1rem; padding-top: 1rem; border-top: 1px solid var(--outline); }
 .lb-ep { font-size: .78rem; color: var(--prose-3); text-align: right; white-space: nowrap; }
