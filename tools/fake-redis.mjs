@@ -34,6 +34,7 @@ export function fakeRedis() {
     HSET(k, f, v) { hash(k).set(f, v); return 1; },
     HGET: (k, f) => (db.has(k) && db.get(k).has(f) ? db.get(k).get(f) : null),
     HMGET: (k, ...fields) => fields.map(f => COMMANDS.HGET(k, f)),
+    HGETALL: k => (db.has(k) ? [...db.get(k).entries()].flat() : []),
     HINCRBY(k, f, by) { const h = hash(k), v = Number(h.get(f) || 0) + Number(by); h.set(f, String(v)); return v; },
     SADD(k, ...members) {
       const s = set(k);

@@ -743,6 +743,16 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 .lb-name .muted { font-weight: 500; text-transform: none; }
 .lb-rolls { font-size: .78rem; color: var(--prose-2); text-align: right; white-space: nowrap; }
 
+/* profil public : noms cliquables, page d'un joueur */
+.lb-name { text-decoration: none; justify-self: start; max-width: 100%; }
+.player-link { font-weight: 700; color: var(--prose); text-decoration: none; }
+.lb-name:hover, .player-link:hover { text-decoration: underline; text-underline-offset: 3px; }
+.back-link { display: inline-block; margin-top: .4rem; font-size: .75rem; color: var(--prose-3); text-decoration: none; }
+.back-link:hover { color: var(--prose); }
+.page-title .muted { font-size: .55em; font-weight: 500; text-transform: none; }
+.profile-sub { margin: -.4rem 0 1rem; }
+.record .when { font-size: .66rem; color: var(--prose-3); white-space: nowrap; }
+
 .field-error { margin: .45rem 0 0; font-size: .74rem; color: var(--danger); }
 .credit { margin-top: 2.4rem; font-size: .72rem; color: var(--prose-3); }
 .credit a { color: var(--prose-2); }

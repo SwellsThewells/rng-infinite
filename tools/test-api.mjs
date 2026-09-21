@@ -217,4 +217,35 @@ assert.deepEqual(r.body.entries.map(e => e.name).sort(), ['Alice', 'Sacha']);
 assert.equal((await setName(bob, '   ')).status, 400);
 assert.equal((await setName({ ...bob, secret: '9'.repeat(32) }, 'Zed')).status, 403);
 
+// 11. Profil public : trouvé par nom (majuscules/accents ignorés), calculé depuis l'historique, sans identifiant.
+const profile = require(path.join(ROOT, 'api/profile.js'));
+r = await call(profile, { url: '/api/profile?name=ALICE' });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+assert.equal(r.body.name, 'Alice');
+const aliceHist = (await call(history, { method: 'POST', body: aliceTab })).body.rolls;
+const aliceScores = aliceHist.map(([n]) => engine.scoreOf(n));
+assert.equal(r.body.rolls, aliceHist.length);
+assert.equal(r.body.lifetime, aliceScores.reduce((x, y) => x + y, 0));
+assert.equal(r.body.since, aliceHist[0][1]);
+assert.equal(r.body.best[0].s, Math.max(...aliceScores));
+assert.ok(r.body.best.length <= 10 && r.body.best.every((x, i, all) => i === 0 || all[i - 1].s >= x.s), 'meilleurs tirages triés');
+const aliceBadges = aliceHist.flatMap(([n]) => engine.analyze(n).earnedIds);
+assert.deepEqual(Object.keys(r.body.badges).sort(), [...new Set(aliceBadges)].sort());
+assert.equal(Object.values(r.body.badges).reduce((x, [c]) => x + c, 0), aliceBadges.length, 'chaque badge compté autant de fois qu\'obtenu');
+assert.equal(typeof r.body.rank, 'number');
+assert.ok(!JSON.stringify(r.body).includes(alice.playerId), 'aucun id dans le profil');
+
+// Ancien joueur sans clé name:* : retrouvé par le hash "names", son meilleur tirage compte même hors historique.
+const legacy = 'c'.repeat(16);
+run([['HSET', 'names', legacy, 'Émile'], ['HSET', 'best:all', legacy, JSON.stringify({ n: 777777, s: engine.scoreOf(777777), t: t0 })]]);
+r = await call(profile, { url: '/api/profile?name=emile' });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+assert.equal(r.body.name, 'Émile');
+assert.equal(r.body.rolls, 1);
+assert.equal(r.body.best[0].n, 777777);
+assert.equal(r.body.rank, null);
+assert.equal((await call(profile, { url: '/api/profile?name=Nobody' })).status, 404);
+assert.equal((await call(profile, { url: '/api/profile' })).status, 400);
+assert.equal((await call(profile, { method: 'POST' })).status, 405);
+
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

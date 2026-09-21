@@ -50,6 +50,9 @@
     leaderboard(period) {
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
     },
+    profile(name) {
+      return this.request(`/api/profile?name=${encodeURIComponent(name)}`);
+    },
     claimName(name) {
       const p = Store.player;
       return this.request('/api/name', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name }) });
@@ -761,11 +764,12 @@
     }
   }
 
-  // Synchronise l'historique avec le compte Google, dans les deux sens : récupère les tirages faits sur d'autres
-  // appareils, puis envoie ceux que seul cet appareil connaît. Les stats, badges et l'XP total en découlent.
+  // Synchronise l'historique avec le serveur, dans les deux sens : récupère les tirages faits sur d'autres appareils
+  // (compte Google), puis envoie ceux que seul cet appareil connaît. Les stats, badges et l'XP total en découlent.
+  // Sans Google aussi : le profil public du joueur (clic sur son nom au classement) inclut ses tirages hors ligne.
   let syncing = null;
   function syncHistory() {
-    if (!Store.player.google) return Promise.resolve(0);
+    if (!Store.player.google && !Store.player.name) return Promise.resolve(0);
     if (!syncing) {
       syncing = (async () => {
         try {
@@ -840,7 +844,7 @@
       <div class="feature-card" id="today-card" data-tier="${a.tier}" data-number="${entry.n}" data-caption="${esc(`Today's best · ${entry.name}`)}" style="cursor:pointer">
         <div class="eyebrow">Today's best roll</div>
         <span class="num-card md" data-tier="${a.tier}">${a.str}</span>
-        <div class="feature-meta">rolled by <b>${esc(entry.name)}</b>${entry.me ? ' (you)' : ''}</div>
+        <div class="feature-meta">rolled by <a class="player-link" href="${profileHref(entry.name)}">${esc(entry.name)}</a>${entry.me ? ' (you)' : ''}</div>
         <div class="pill-row">${pills}${more > 0 ? `<span class="more">+${more} more</span>` : ''}</div>
         <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(entry.s)} XP</div>
         <div class="feature-meta" style="margin-bottom:0">${plural(rollsToday, 'roll')} today</div>
@@ -1374,61 +1378,140 @@
   // ---------------------------------------------------------------- collection
   const collState = { filter: 'all', q: '' };
 
+  // Une collection se lit par get(id) → { count, first } ou rien : la mienne (historique local)
+  // ou celle d'un autre joueur (réponse de /api/profile : { id: [nombre de fois, premier nombre] }).
+  const localCollection = () => ({
+    get(id) { const e = Collection.badges.get(id); return e && { count: e.count, first: Store.rolls[e.first][0] }; },
+  });
+  const profileCollection = badges => ({
+    get(id) { const e = badges[id]; return e && { count: e[0], first: e[1] }; },
+  });
+
   function renderBadges() {
     currentView = 'badges';
     Collection.ensure();
-    const found = Collection.badges.size, total = Engine.badges.length;
     app.innerHTML = `
       <div class="page page-wide">
         <h1 class="page-title">Badge collection</h1>
-        <div class="panel-head"><span class="mono" style="font-weight:700">${found} / ${total} found</span><span class="panel-note">${((found / total) * 100).toFixed(1)}% complete</span></div>
-        <div class="progress"><div style="width:${(found / total) * 100}%"></div></div>
-        <div class="toolbar">
-          <input class="input grow" id="c-q" type="search" placeholder="Search badges…" value="${esc(collState.q)}">
-          <div class="seg" id="c-filter">${['all', 'found', 'missing'].map(f => `<button data-v="${f}" class="${collState.filter === f ? 'on' : ''}">${f}</button>`).join('')}</div>
-        </div>
-        <div id="c-body"></div>
+        ${collectionHTML(Collection.badges.size, collState)}
       </div>`;
-    $('#c-q').addEventListener('input', e => { collState.q = e.target.value; drawCollection(); });
+    mountCollection(localCollection(), collState);
+  }
+
+  function collectionHTML(found, state) {
+    const total = Engine.badges.length;
+    return `
+      <div class="panel-head"><span class="mono" style="font-weight:700">${found} / ${total} found</span><span class="panel-note">${((found / total) * 100).toFixed(1)}% complete</span></div>
+      <div class="progress"><div style="width:${(found / total) * 100}%"></div></div>
+      <div class="toolbar">
+        <input class="input grow" id="c-q" type="search" placeholder="Search badges…" value="${esc(state.q)}">
+        <div class="seg" id="c-filter">${['all', 'found', 'missing'].map(f => `<button data-v="${f}" class="${state.filter === f ? 'on' : ''}">${f}</button>`).join('')}</div>
+      </div>
+      <div id="c-body"></div>`;
+  }
+
+  function mountCollection(src, state) {
+    $('#c-q').addEventListener('input', e => { state.q = e.target.value; drawCollection(src, state); });
     $('#c-filter').addEventListener('click', e => {
       const btn = e.target.closest('button');
       if (!btn) return;
-      collState.filter = btn.dataset.v;
+      state.filter = btn.dataset.v;
       $('#c-filter').querySelectorAll('button').forEach(b => b.classList.toggle('on', b === btn));
-      drawCollection();
+      drawCollection(src, state);
     });
-    drawCollection();
+    drawCollection(src, state);
   }
 
-  function drawCollection() {
-    const q = collState.q.trim().toLowerCase();
+  function drawCollection(src, state) {
+    const q = state.q.trim().toLowerCase();
     const blocks = ['mythic', 'anomaly', 'epic', 'rare', 'uncommon', 'common'].map(tier => {
       const all = Engine.badges.filter(b => b.tier === tier);
-      const foundInTier = all.filter(b => Collection.badges.has(b.id)).length;
+      const foundInTier = all.filter(b => src.get(b.id)).length;
       const list = all
-        .filter(b => collState.filter === 'all' || (collState.filter === 'found') === Collection.badges.has(b.id))
+        .filter(b => state.filter === 'all' || (state.filter === 'found') === !!src.get(b.id))
         .filter(b => !q || b.label.toLowerCase().includes(q) || b.desc.toLowerCase().includes(q))
         .sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
       if (!list.length) return '';
       return `
         <div class="tier-block">
           <h3>${tierPill(tier)} <span class="muted mono">${foundInTier}/${all.length}</span></h3>
-          <div class="badge-grid">${list.map(collTileHTML).join('')}</div>
+          <div class="badge-grid">${list.map(b => collTileHTML(b, src.get(b.id))).join('')}</div>
         </div>`;
     }).join('');
     $('#c-body').innerHTML = blocks || '<div class="empty">No badge matches.</div>';
   }
 
-  function collTileHTML(b) {
-    const e = Collection.badges.get(b.id);
+  function collTileHTML(b, e) {
     return `
       <button class="coll${e ? '' : ' missing'}"${e ? ` data-tier="${b.tier}"` : ''} data-badge="${b.id}">
         <span class="top"><span class="emoji">${b.emoji}</span><span class="name">${esc(b.label)}</span><span class="ep-pill">${compact(b.score)}</span></span>
         <span class="desc">${esc(b.desc)}</span>
         <span class="foot">${e
-          ? `<span class="count">×${fmt(e.count)}</span><span>first: <span class="mono">${Store.rolls[e.first][0]}</span></span>`
+          ? `<span class="count">×${fmt(e.count)}</span><span>first: <span class="mono">${e.first}</span></span>`
           : `<span>${oneIn(window.BADGE_ODDS[b.id])}</span><span class="muted">not found</span>`}</span>
       </button>`;
+  }
+
+  // ---------------------------------------------------------------- profil public d'un joueur
+  // Ouvert en cliquant un nom (classement, meilleur tirage du jour) : meilleurs tirages et collection, calculés par le serveur.
+  const profileHref = name => `#/player/${encodeURIComponent(name)}`;
+  let profileToken = 0;
+
+  async function renderProfile(name) {
+    currentView = 'profile';
+    const token = ++profileToken;
+    app.innerHTML = `
+      <div class="page page-wide">
+        <a class="back-link" href="#/leaderboard">← Leaderboard</a>
+        <h1 class="page-title" id="p-title">${esc(name)}</h1>
+        <div id="p-body"><div class="empty">Loading…</div></div>
+      </div>`;
+    let p;
+    try {
+      p = await Online.profile(name);
+    } catch (err) {
+      if (token === profileToken && currentView === 'profile') {
+        $('#p-body').innerHTML = `<div class="empty">${err.status === 404 ? `No player called “${esc(name)}”.` : 'Profile unavailable right now.'}</div>`;
+      }
+      return;
+    }
+    if (token !== profileToken || currentView !== 'profile') return;
+
+    const me = !!Store.player.name && p.name === Store.player.name;
+    const found = Object.keys(p.badges).length, total = Engine.badges.length;
+    const top = p.best[0];
+    const day = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const caption = x => `${p.name} · ${fullDate(x.t)}`;
+    const collectionState = { filter: 'all', q: '' };
+    $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''}`;
+    $('#p-body').innerHTML = `
+      <p class="panel-note profile-sub">${p.rolls ? `Playing since ${day(p.since)} · last roll ${relTime(p.last)}` : 'No rolls yet'}</p>
+      <div class="tiles">
+        ${tile('Rolls', fmt(p.rolls), p.rolls ? `${fmt(p.lifetime / p.rolls)} XP per roll` : '–')}
+        ${tile('Lifetime XP', compact(p.lifetime), `${fmt(p.lifetime)} XP`)}
+        ${tile('Best roll', top ? `<span data-number="${top.n}" data-caption="${esc(caption(top))}" style="cursor:pointer">${analysis(top.n).str}</span>` : '–', top ? `${fmt(top.s)} XP` : '')}
+        ${tile('All-time rank', p.rank ? '#' + p.rank : '–', 'best single roll')}
+        ${tile('Badges', `${found}/${total}`, `${((found / total) * 100).toFixed(0)}% of the collection`)}
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title">Best rolls</h3><span class="panel-note">click a number for its badges</span></div>
+        ${p.best.length ? `<div class="records">${p.best.map((x, k) => {
+          const a = analysis(x.n);
+          return `
+            <div class="record" data-number="${x.n}" data-caption="${esc(caption(x))}">
+              <span class="rank">${k + 1}</span>
+              <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
+              <span class="grow">${a.groups.slice(0, 3).map(g => `${g.badge.emoji} ${esc(g.badge.label)}`).join(' · ')}</span>
+              <span class="when" title="${fullDate(x.t)}">${relTime(x.t)}</span>
+              <span class="ep-pill">${compact(x.s)} XP</span>
+            </div>`;
+        }).join('')}</div>` : '<div class="empty">No rolls yet.</div>'}
+      </div>
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title">Badge collection</h3></div>
+        ${collectionHTML(found, collectionState)}
+      </div>`;
+    mountCollection(profileCollection(p.badges), collectionState);
   }
 
   // ---------------------------------------------------------------- leaderboard / à propos
@@ -1491,7 +1574,7 @@
     return `
       <div class="lb-row${e.me ? ' me' : ''}" data-number="${e.n}" data-caption="${esc(`#${e.rank} · ${e.name} · ${relTime(e.t)}`)}">
         <span class="lb-rank">${medal || '#' + e.rank}</span>
-        <span class="lb-name">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</span>
+        <a class="lb-name" href="${profileHref(e.name)}" title="See ${esc(e.name)}'s profile">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</a>
         <span class="lb-rolls mono" title="Rolls by this player ${{ day: 'today', week: 'this week', all: 'in total' }[lbState.period]}">${e.rolls ? plural(e.rolls, 'roll') : '–'}</span>
         <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
         <span class="lb-ep mono">${fmt(e.s)} XP</span>
@@ -1520,7 +1603,8 @@
         <div class="rarity-table">${badgeRows.map(([t, l]) => `${tierPill(t)}<span>${l}</span>`).join('')}</div>
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
-        <p>Sign in with Google to keep your history, stats and badges on every device. Otherwise they stay in this browser, and you can export them (JSON) from the player menu.</p>
+        <p>Click a name on the leaderboard to see that player's profile: best rolls and badge collection.</p>
+        <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
         <p class="muted">Based on the daily game <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>: this version removes the daily limit and adds history, stats, Google sign-in and a leaderboard between friends.</p>
         <p class="muted"><a href="privacy.html">Privacy policy</a></p>
         <p><a class="btn" href="#/">Go roll</a></p>
@@ -1536,9 +1620,11 @@
     clearTimeout(lbTimer);
     closeModal();
     tip.hidden = true;
-    const key = location.hash.replace(/^#\/?/, '').split('?')[0];
-    (ROUTES[key] || renderHome)();
-    document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === key));
+    const [key, ...rest] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
+    if (key === 'player' && rest.length) renderProfile(decodeURIComponent(rest.join('/')));
+    else (ROUTES[key] || renderHome)();
+    const navKey = key === 'player' ? 'leaderboard' : key;
+    document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navKey));
     window.scrollTo(0, 0);
   }
 
@@ -1562,6 +1648,8 @@
   $('#player-btn').addEventListener('click', openSettings);
 
   document.addEventListener('click', e => {
+    // Lien vers une page du site (profil d'un joueur…) dans une ligne cliquable : la navigation l'emporte.
+    if (e.target.closest('a[href^="#/"]')) return;
     const badge = e.target.closest('[data-badge]');
     if (badge) { e.preventDefault(); openBadgeModal(badge.dataset.badge); return; }
     const number = e.target.closest('[data-number]');
