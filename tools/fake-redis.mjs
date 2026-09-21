@@ -12,13 +12,22 @@ export function fakeRedis() {
     return [Math.max(0, s), e];
   };
 
+  // Expiration paresseuse de SET … PX (le délai entre deux tirages) : la clé disparaît à sa prochaine lecture.
+  const expires = new Map();
+  const alive = k => {
+    if (expires.has(k) && expires.get(k) <= Date.now()) { db.delete(k); expires.delete(k); }
+    return db.has(k);
+  };
+
   const COMMANDS = {
     SET(k, v, ...opts) {
-      if (opts.includes('NX') && db.has(k)) return null;
+      if (opts.includes('NX') && alive(k)) return null;
       db.set(k, v);
+      const px = opts.indexOf('PX');
+      if (px >= 0) expires.set(k, Date.now() + Number(opts[px + 1])); else expires.delete(k);
       return 'OK';
     },
-    GET: k => (db.has(k) ? db.get(k) : null),
+    GET: k => (alive(k) ? db.get(k) : null),
     DEL: (...keys) => keys.filter(k => db.delete(k)).length,
     INCR(k) { const v = Number(db.get(k) || 0) + 1; db.set(k, String(v)); return v; },
     EXPIRE: () => 1,

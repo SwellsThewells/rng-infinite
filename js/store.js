@@ -1,5 +1,5 @@
 /* RNG∞ — persistance locale (localStorage).
- * Un tirage est stocké en tableau compact [nombre, EP, timestamp] ; les badges se recalculent à la demande.
+ * Un tirage est stocké en tableau compact [nombre, XP, timestamp] ; les badges se recalculent à la demande.
  * Le champ player.id sert d'identifiant stable pour le futur leaderboard en ligne.
  */
 (function (root) {
@@ -129,7 +129,7 @@
       return added;
     },
 
-    // Recalcule l'EP stocké de chaque tirage quand la version des scores change.
+    // Recalcule l'XP stocké de chaque tirage quand la version des scores change.
     rescore(scoreOf, version) {
       if (this.state.scoreVersion === version) return 0;
       let changed = 0;
@@ -157,7 +157,7 @@
       });
     },
 
-    // Fusionne un export : les EP sont recalculés par l'appelant (rescore) pour ne jamais faire confiance au fichier.
+    // Fusionne un export : les XP sont recalculés par l'appelant (rescore) pour ne jamais faire confiance au fichier.
     importJSON(text, rescore) {
       const data = JSON.parse(text);
       const incoming = Array.isArray(data.rolls) ? data.rolls : [];

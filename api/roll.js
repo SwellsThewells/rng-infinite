@@ -1,5 +1,5 @@
 // POST /api/roll  { playerId, secret, name }
-// Le serveur tire le nombre (personne ne peut choisir son 1337), calcule l'EP avec le moteur du site,
+// Le serveur tire le nombre (personne ne peut choisir son 1337), calcule l'XP avec le moteur du site,
 // puis met à jour le meilleur tirage du joueur pour le jour, la semaine et tous les temps.
 const crypto = require('node:crypto');
 const { engine, redis, scopes, cleanName, cors, send, historyKey, HISTORY_CAP, claimPlayer, claimName } = require('./_lib');

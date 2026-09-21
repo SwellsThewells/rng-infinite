@@ -54,7 +54,7 @@ const { engine } = require(path.join(ROOT, 'api/_lib.js'));
 const alice = { playerId: 'a'.repeat(16), secret: '1'.repeat(32), name: 'Alice' };
 const bob = { playerId: 'b'.repeat(16), secret: '2'.repeat(32), name: '  Bob<script>  ' };
 
-// 1. Premier tirage : nombre valide, EP recalculé par le moteur, classé 1er du jour.
+// 1. Premier tirage : nombre valide, XP recalculé par le moteur, classé 1er du jour.
 let r = await call(roll, { method: 'POST', body: alice });
 assert.equal(r.status, 200, JSON.stringify(r.body));
 assert.ok(Number.isInteger(r.body.n) && r.body.n >= 0 && r.body.n <= 1000000);
@@ -69,6 +69,11 @@ r = await call(roll, { method: 'POST', body: alice });
 assert.equal(r.status, 429);
 r = await call(roll, { method: 'POST', body: { ...alice, secret: '9'.repeat(32) } });
 assert.equal(r.status, 403);
+// Le délai se lève seul après 8 s, comme sur Upstash (sinon le serveur de dev refuse tout 2e tirage).
+const realNow = Date.now;
+Date.now = () => realNow() + 8001;
+assert.equal(run([['SET', `cooldown:${alice.playerId}`, '1', 'PX', 8000, 'NX']])[0].result, 'OK');
+Date.now = realNow;
 
 // 3. Entrées invalides.
 assert.equal((await call(roll, { method: 'POST', body: { ...bob, name: '   ' } })).status, 400);
@@ -81,7 +86,7 @@ r = await call(roll, { method: 'POST', body: bob });
 assert.equal(r.status, 200);
 const bobFirst = r.body;
 
-// 5. Le classement du jour trie par EP, compte les tirages et ne révèle aucun identifiant.
+// 5. Le classement du jour trie par XP, compte les tirages et ne révèle aucun identifiant.
 r = await call(leaderboard, { url: `/api/leaderboard?period=day&me=${alice.playerId}` });
 assert.equal(r.status, 200);
 assert.equal(r.body.entries.length, 2);
@@ -212,4 +217,4 @@ assert.deepEqual(r.body.entries.map(e => e.name).sort(), ['Alice', 'Sacha']);
 assert.equal((await setName(bob, '   ')).status, 400);
 assert.equal((await setName({ ...bob, secret: '9'.repeat(32) }, 'Zed')).status, 403);
 
-console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);
+console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

@@ -13,7 +13,7 @@
     summary: 1500, rarity: 1000, stats: 250, lifetimeShow: 1000, lifetimePause: 1500, lifetimeTick: 1500, end: 500,
   };
   // Les chiffres tournent toujours au rythme d'origine et ne se sautent pas.
-  // badges : arrivée des badges ; base : fin de séquence (rareté, EP à vie).
+  // badges : arrivée des badges ; base : fin de séquence (rareté, XP à vie).
   const SPEEDS = {
     dramatic: { badges: 1, base: 1 },
     normal: { badges: 0.85, base: 0.6 },
@@ -275,7 +275,7 @@
             ${tierPill(b.tier)}
             ${isNew ? '<span class="new-tag">NEW</span>' : ''}
           </div>
-          <span class="ep-pill">+${fmt(b.score)} EP</span>
+          <span class="ep-pill">+${fmt(b.score)} XP</span>
         </div>
         <div class="badge-desc">${esc(b.desc)}</div>
         ${detail ? `<div class="badge-extra">${esc(detail)}</div>` : ''}
@@ -300,7 +300,7 @@
     const lines = [`RNG∞ 🎲 ${a.str}`, '', `${TIER_EMOJI[a.tier]} ${a.tier.toUpperCase()}${rank ? ' • ' + cap(rank.toLowerCase()) : ''}`, ''];
     a.groups.slice(0, 3).forEach(g => lines.push(`${TIER_EMOJI[g.badge.tier]} ${g.badge.emoji} ${g.badge.label}`));
     if (a.groups.length > 3) lines.push(`+${a.groups.length - 3} more`);
-    lines.push('', `${fmt(a.total)} EP`, location.origin + location.pathname);
+    lines.push('', `${fmt(a.total)} XP`, location.origin + location.pathname);
     return lines.join('\n');
   }
 
@@ -458,7 +458,7 @@
         <div class="eyebrow">Roll #${fmt(index + 1)} · ${fullDate(r[2])}</div>
         <div style="margin-top:.9rem"><span class="num-card lg" data-tier="${a.tier}">${a.str}</span></div>
         <div class="result-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
-        <div class="ep-big">${fmt(a.total)} EP</div>
+        <div class="ep-big">${fmt(a.total)} XP</div>
         ${occ.length > 1 ? `<p class="repeat-note">Rolled ${occ.length}× in your history: ${occ.map(i => `<a href="javascript:void 0" data-roll="${i}">#${fmt(i + 1)}</a>`).join(', ')}</p>` : ''}
         <div class="result-actions"><button class="btn" data-share>${shareIcon()} Share</button></div>
         ${breakdownHTML(r[0], a)}
@@ -485,7 +485,7 @@
       <div style="text-align:center">
         <div style="font-size:2.6rem;line-height:1.2">${b.emoji}</div>
         <h2 style="margin:.35rem 0 .5rem">${esc(b.label)}</h2>
-        <div class="pill-row">${tierPill(b.tier)}<span class="ep-pill">+${fmt(b.score)} EP</span></div>
+        <div class="pill-row">${tierPill(b.tier)}<span class="ep-pill">+${fmt(b.score)} XP</span></div>
         <p class="badge-desc" style="font-size:.74rem;margin:.8rem 0 1rem">${esc(b.desc)}</p>
         ${b.custom ? '<p class="panel-note" style="margin:-.4rem 0 1rem">Custom badge — not in the original game</p>' : ''}
       </div>
@@ -496,7 +496,7 @@
         <div class="kv"><span class="k">Family</span><span class="v" style="font-family:var(--font-sans);font-weight:500;text-align:right;line-height:1.7">
           ${family.map(f => `<span class="badge-pill" data-tier="${f.tier}" data-badge="${f.id}" style="cursor:pointer;${f.id === id ? 'font-weight:700' : ''}">${f.emoji} ${esc(f.label)}</span>`).join(' ')}
         </span></div>
-        <p class="panel-note" style="margin:.2rem 0 0">Only the highest-scoring badge of a family counts toward EP; the others show as “earned”.</p>` : ''}
+        <p class="panel-note" style="margin:.2rem 0 0">Only the highest-scoring badge of a family counts toward XP; the others show as “earned”.</p>` : ''}
       ${holders.length ? `<div class="eyebrow" style="margin:1.1rem 0 .6rem">Your rolls with this badge${e.count > holders.length ? ` (latest ${holders.length})` : ''}</div>
         <div class="pill-row" style="justify-content:flex-start">${holders.map(i => `<button class="num-card sm" data-tier="${Engine.cardTier(Store.rolls[i][1])}" data-roll="${i}">${Store.rolls[i][0]}</button>`).join('')}</div>` : ''}
     `);
@@ -612,7 +612,7 @@
           <p class="tagline">Infinite rolls. One number at a time. What will yours be?</p>
           <button class="btn-roll" id="roll-btn">Generate</button>
           <p class="hint">
-            ${rolls.length ? `${plural(rolls.length, 'roll')} · ${fmt(lifetimeEP())} lifetime EP · ` : ''}
+            ${rolls.length ? `${plural(rolls.length, 'roll')} · ${fmt(lifetimeEP())} lifetime XP · ` : ''}
             ${name ? `playing as <b>${esc(name)}</b> · ` : '<a href="javascript:void 0" id="pick-name">pick a name</a> · '}
             press <kbd>Space</kbd>
           </p>
@@ -643,7 +643,7 @@
         <span class="num-card md" data-tier="${a.tier}">${a.str}</span>
         <div class="feature-meta">roll #${fmt(i + 1)} · ${relTime(r[2])}</div>
         <div class="pill-row">${pills}${more > 0 ? `<span class="more">+${more} more</span>` : ''}</div>
-        <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(a.total)} EP</div>
+        <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(a.total)} XP</div>
       </div>`;
   }
 
@@ -762,7 +762,7 @@
   }
 
   // Synchronise l'historique avec le compte Google, dans les deux sens : récupère les tirages faits sur d'autres
-  // appareils, puis envoie ceux que seul cet appareil connaît. Les stats, badges et l'EP total en découlent.
+  // appareils, puis envoie ceux que seul cet appareil connaît. Les stats, badges et l'XP total en découlent.
   let syncing = null;
   function syncHistory() {
     if (!Store.player.google) return Promise.resolve(0);
@@ -827,7 +827,7 @@
         ${caption ? `<div class="eyebrow">${esc(caption)}</div>` : ''}
         <div style="margin-top:.9rem"><span class="num-card lg" data-tier="${a.tier}">${a.str}</span></div>
         <div class="result-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
-        <div class="ep-big">${fmt(a.total)} EP</div>
+        <div class="ep-big">${fmt(a.total)} XP</div>
         ${breakdownHTML(n, a)}
       </div>`, m => animateDigits(m, { stagger: 120 }));
   }
@@ -842,7 +842,7 @@
         <span class="num-card md" data-tier="${a.tier}">${a.str}</span>
         <div class="feature-meta">rolled by <b>${esc(entry.name)}</b>${entry.me ? ' (you)' : ''}</div>
         <div class="pill-row">${pills}${more > 0 ? `<span class="more">+${more} more</span>` : ''}</div>
-        <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(entry.s)} EP</div>
+        <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(entry.s)} XP</div>
         <div class="feature-meta" style="margin-bottom:0">${plural(rollsToday, 'roll')} today</div>
       </div>`;
   }
@@ -930,7 +930,7 @@
   }
 
   // Révélation en étapes chronométrées, comme l'original :
-  // chiffres → badges un par un (EP qui monte) → compteur de badges → rareté → TOP x % → EP à vie.
+  // chiffres → badges un par un (XP qui monte) → compteur de badges → rareté → TOP x % → XP à vie.
   // Rien ne peut être sauté ; le menu reste verrouillé jusqu'à l'affichage de la rareté.
   function playReveal(ctx) {
     currentView = 'result';
@@ -950,10 +950,10 @@
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
           </div>
           <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
-          <div class="ep-big pending" id="r-ep">??? EP</div>
+          <div class="ep-big pending" id="r-ep">??? XP</div>
           <div class="lifetime invisible" id="r-life">
             <div class="lifetime-row"><span class="v" id="r-life-v">${fmt(ctx.lifetimeBefore)}</span><span class="delta" id="r-life-delta" hidden>+${fmt(a.total)}</span></div>
-            <div class="l">Your lifetime EP</div>
+            <div class="l">Your lifetime XP</div>
           </div>
           <div class="result-actions invisible" id="r-actions">
             <button class="btn" id="r-share">${shareIcon()} Share</button>
@@ -1005,7 +1005,7 @@
       if (quick) collapse(); else setTimeout(collapse, 260);
     });
 
-    // 2. Badges un par un, du moins rare au plus rare : chacun s'insère en haut et fait monter l'EP.
+    // 2. Badges un par un, du moins rare au plus rare : chacun s'insère en haut et fait monter l'XP.
     ascending.forEach((g, i) => {
       step(i === 0 ? REVEAL.badgeStart : badgeDelay(i - 1, ascending.length), quick => {
         $('#r-breakdown').hidden = false;
@@ -1013,11 +1013,11 @@
         animateDigits($('#r-list'), { start: reducedMotion ? 0 : 450 });
         const from = running;
         running += g.badge.score;
-        countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * kb, v => `${fmt(v)} EP`);
+        countUp(ep, from, running, quick ? 0 : REVEAL.badgeEp * kb, v => `${fmt(v)} XP`);
       }, kb);
     });
 
-    // 3. Résumé, rareté, TOP x %, EP à vie.
+    // 3. Résumé, rareté, TOP x %, XP à vie.
     step(REVEAL.summary, () => {
       show($('#r-count'), 'fade-in');
       $('#r-notes').innerHTML = notesHTML(ctx, a);
@@ -1027,7 +1027,7 @@
       card.removeAttribute('title');
       if (!reducedMotion) card.classList.add(a.tier === 'anomaly' || a.tier === 'mythic' ? 'shake' : 'reveal-pulse');
       ep.classList.remove('pending');
-      countUp(ep, 0, a.total, 0, v => `${fmt(v)} EP`);
+      countUp(ep, 0, a.total, 0, v => `${fmt(v)} XP`);
       FX.celebrate(a.tier, card);
       show($('#r-actions'), 'fade-in');
       $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
@@ -1077,7 +1077,7 @@
     }
     Collection.ensure();
     const tierOptions = [['all', 'All rarities'], ['rare+', 'Rare or better'], ...TIERS_DESC.map(t => [t, cap(t)])];
-    const sortOptions = [['new', 'Newest first'], ['old', 'Oldest first'], ['high', 'Highest EP'], ['low', 'Lowest EP']];
+    const sortOptions = [['new', 'Newest first'], ['old', 'Oldest first'], ['high', 'Highest XP'], ['low', 'Lowest XP']];
     const options = (list, value) => list.map(([v, l]) => `<option value="${v}"${v === value ? ' selected' : ''}>${l}</option>`).join('');
     app.innerHTML = `
       <div class="page">
@@ -1136,7 +1136,7 @@
         <span class="idx">#${fmt(x.i + 1)}</span>
         <span><span class="num-card sm" data-tier="${x.tier}">${a.str}</span></span>
         <span class="mid">${tierPill(x.tier)}<span class="emojis">${a.groups.slice(0, 4).map(g => g.badge.emoji).join(' ')}</span>${reps > 1 ? `<span class="muted" style="font-size:.66rem" title="Rolled ${reps} times">×${reps}</span>` : ''}</span>
-        <span class="right"><span class="ep-pill">${fmt(x.s)} EP</span><span class="when" title="${fullDate(x.t)}">${relTime(x.t)}</span></span>
+        <span class="right"><span class="ep-pill">${fmt(x.s)} XP</span><span class="when" title="${fullDate(x.t)}">${relTime(x.t)}</span></span>
       </div>`;
   }
 
@@ -1217,7 +1217,7 @@
     return svg + '</svg>';
   }
 
-  // Nuage de points EP par tirage, échelle log.
+  // Nuage de points XP par tirage, échelle log.
   function epChartSVG() {
     const rolls = Store.rolls;
     const start = Math.max(0, rolls.length - 300);
@@ -1237,11 +1237,11 @@
     }
     const med = window.SCORE_STATS.median;
     svg += `<line x1="${m.l}" x2="${W - m.r}" y1="${y(med)}" y2="${y(med)}" stroke="var(--prose-3)" stroke-width="1.5" stroke-dasharray="4 3"/>`;
-    svg += `<text class="halo" x="${W - m.r}" y="${y(med) - 5}" text-anchor="end">typical roll · ${compact(med)} EP</text>`;
+    svg += `<text class="halo" x="${W - m.r}" y="${y(med) - 5}" text-anchor="end">typical roll · ${compact(med)} XP</text>`;
     const hitW = pts.length > 1 ? step : plotW;
     pts.forEach((r, i) => {
       const a = analysis(r[0]);
-      const tipHtml = `<b>${a.str}</b> · roll #${fmt(start + i + 1)}<br>${fmt(r[1])} EP · ${a.tier.toUpperCase()}`;
+      const tipHtml = `<b>${a.str}</b> · roll #${fmt(start + i + 1)}<br>${fmt(r[1])} XP · ${a.tier.toUpperCase()}`;
       svg += `<rect class="hit" x="${x(i) - hitW / 2}" y="${m.t}" width="${hitW}" height="${plotH}" data-tip="${esc(tipHtml)}" data-roll="${start + i}" style="cursor:pointer"/>`;
     });
     pts.forEach((r, i) => {
@@ -1321,10 +1321,10 @@
         <h1 class="page-title">Stats</h1>
         <div class="tiles">
           ${tile('Rolls', fmt(N), `${fmt(st.today)} today`)}
-          ${tile('Lifetime EP', compact(st.lifetime), `${fmt(st.lifetime / N)} EP per roll`)}
-          ${tile('Median roll', fmt(st.median) + ' EP', `typical: ${fmt(window.SCORE_STATS.median)} EP`)}
+          ${tile('Lifetime XP', compact(st.lifetime), `${fmt(st.lifetime / N)} XP per roll`)}
+          ${tile('Median roll', fmt(st.median) + ' XP', `typical: ${fmt(window.SCORE_STATS.median)} XP`)}
           ${tile('Luck', st.luck.toFixed(1), `avg percentile · expected ${expectedLuck.toFixed(1)}`)}
-          ${tile('Best roll', `<span data-roll="${bestI}" style="cursor:pointer">${Store.rolls[bestI][0]}</span>`, `${fmt(Store.rolls[bestI][1])} EP`)}
+          ${tile('Best roll', `<span data-roll="${bestI}" style="cursor:pointer">${Store.rolls[bestI][0]}</span>`, `${fmt(Store.rolls[bestI][1])} XP`)}
           ${tile('Badges', `${found}/${totalBadges}`, `${((found / totalBadges) * 100).toFixed(0)}% of the collection`)}
         </div>
 
@@ -1335,7 +1335,7 @@
         </div>
 
         <div class="panel">
-          <div class="panel-head"><h3 class="panel-title">EP per roll</h3><span class="panel-note">last ${fmt(Math.min(N, 300))} rolls · log scale · click a point</span></div>
+          <div class="panel-head"><h3 class="panel-title">XP per roll</h3><span class="panel-note">last ${fmt(Math.min(N, 300))} rolls · log scale · click a point</span></div>
           <div class="chart-wrap">${epChartSVG()}</div>
         </div>
 
@@ -1432,7 +1432,7 @@
   }
 
   // ---------------------------------------------------------------- leaderboard / à propos
-  // Classement du meilleur tirage de chaque joueur (tirages illimités : l'EP total récompenserait juste le plus gros cliqueur).
+  // Classement du meilleur tirage de chaque joueur (tirages illimités : l'XP total récompenserait juste le plus gros cliqueur).
   const lbState = { period: 'day' };
   let lbTimer = 0;
 
@@ -1494,7 +1494,7 @@
         <span class="lb-name">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</span>
         <span class="lb-rolls mono" title="Rolls by this player ${{ day: 'today', week: 'this week', all: 'in total' }[lbState.period]}">${e.rolls ? plural(e.rolls, 'roll') : '–'}</span>
         <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
-        <span class="lb-ep mono">${fmt(e.s)} EP</span>
+        <span class="lb-ep mono">${fmt(e.s)} XP</span>
       </div>`;
   }
 
@@ -1505,7 +1505,7 @@
     app.innerHTML = `
       <div class="page prose">
         <h1 class="page-title">What is RNG∞?</h1>
-        <p>A random number game with no daily limit. Each roll draws a number from 0 to 1,000,000. The number is checked against ${Engine.badges.length} patterns — palindromes, primes, repeated digits, meme numbers, sequences and more — and every badge it earns is worth EP (entropy points).</p>
+        <p>A random number game with no daily limit. Each roll draws a number from 0 to 1,000,000. The number is checked against ${Engine.badges.length} patterns — palindromes, primes, repeated digits, meme numbers, sequences and more — and every badge it earns is worth XP (experience points).</p>
         <div class="steps">
           <div class="step"><span class="n">1</span><span><b>Roll</b> — hit Generate (or Space) as often as you like.</span></div>
           <div class="step"><span class="n">2</span><span><b>Discover</b> — see which badges your number earns.</span></div>
@@ -1513,10 +1513,10 @@
           <div class="step"><span class="n">4</span><span><b>Track</b> — every roll is kept in your history and stats.</span></div>
         </div>
         <h2 class="panel-title">Number rarity</h2>
-        <p>Your roll's rarity compares its total EP with every possible roll.</p>
+        <p>Your roll's rarity compares its total XP with every possible roll.</p>
         <div class="rarity-table">${cardRows.map(([t, l]) => `${tierPill(t)}<span>${l}</span>`).join('')}</div>
-        <h2 class="panel-title">Badge rarity & EP</h2>
-        <p>A badge is worth <span class="mono">100 × 1,000,001 ÷ (numbers that earn it)</span> EP, so a badge earned by 1 number in 1,000 is worth about 100,000 EP. Related badges form a family (e.g. Pair → Two Pair → Three Pair); only the best badge of a family counts toward your total.</p>
+        <h2 class="panel-title">Badge rarity & XP</h2>
+        <p>A badge is worth <span class="mono">100 × 1,000,001 ÷ (numbers that earn it)</span> XP, so a badge earned by 1 number in 1,000 is worth about 100,000 XP. Related badges form a family (e.g. Pair → Two Pair → Three Pair); only the best badge of a family counts toward your total.</p>
         <div class="rarity-table">${badgeRows.map(([t, l]) => `${tierPill(t)}<span>${l}</span>`).join('')}</div>
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
@@ -1585,7 +1585,7 @@
     }
   });
 
-  // Si la liste des badges ou leurs EP changent (ex. badge perso ajouté), on recalcule l'EP des anciens tirages.
+  // Si la liste des badges ou leurs XP changent (ex. badge perso ajouté), on recalcule l'XP des anciens tirages.
   const SCORE_VERSION = (() => {
     let h = 0;
     for (const b of window.BADGE_META) for (const ch of b.id + b.score) h = (h * 31 + ch.charCodeAt(0)) | 0;

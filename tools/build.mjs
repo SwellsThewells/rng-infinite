@@ -1,7 +1,7 @@
 // Génère js/badge-meta.js et js/percentiles.js, et valide le moteur.
 //   node tools/build.mjs
 // Validation 1 : pour chaque badge, score dérivé de sa fréquence réelle (100 × 1 000 001 / nb) == score de référence.
-// Validation 2 : totaux EP de vrais tirages relevés sur le leaderboard d'origine.
+// Validation 2 : totaux XP de vrais tirages relevés sur le leaderboard d'origine.
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
@@ -43,7 +43,7 @@ let mismatches = 0;
 engine.badges.forEach((b, i) => {
   const derived = counts[i] ? Math.round((100 * SPAN) / counts[i]) : Infinity;
   if (CUSTOM_IDS.has(b.id)) {
-    console.log(`  • badge perso ${b.id} : ${b.score} EP (valeur naturelle d'après sa fréquence : ${derived})`);
+    console.log(`  • badge perso ${b.id} : ${b.score} XP (valeur naturelle d'après sa fréquence : ${derived})`);
     return;
   }
   if (derived !== b.score) {
@@ -76,7 +76,7 @@ let knownOk = 0;
 for (const [n, expected] of Object.entries(KNOWN)) {
   const got = originalTotals[Number(n)];
   if (got === expected) knownOk++;
-  else console.log(`  ✗ tirage ${n} : attendu ${expected} EP, obtenu ${got} EP`);
+  else console.log(`  ✗ tirage ${n} : attendu ${expected} XP, obtenu ${got} XP`);
 }
 console.log(`Tirages réels : ${knownOk}/${Object.keys(KNOWN).length} totaux conformes`);
 
@@ -105,7 +105,7 @@ const meanPct = pctSum / SPAN;
 for (const t of TIER_ORDER) tierOdds[t] = tierOdds[t] / SPAN;
 const avg = totals.reduce((a, b) => a + b, 0) / SPAN;
 console.log('Probabilité par rareté de carte :', Object.fromEntries(Object.entries(tierOdds).map(([k, v]) => [k, (v * 100).toFixed(2) + '%'])));
-console.log(`EP moyen ${Math.round(avg)} · médian ${sorted[Math.floor(SPAN / 2)]} · table ${table.length} entrées`);
+console.log(`XP moyen ${Math.round(avg)} · médian ${sorted[Math.floor(SPAN / 2)]} · table ${table.length} entrées`);
 
 const badgeOdds = Object.fromEntries(engine.badges.map((b, i) => [b.id, counts[i] / SPAN]));
 
@@ -127,7 +127,7 @@ fs.writeFileSync(path.join(ROOT, 'js/percentiles.js'),
   'window.SCORE_STATS = ' + JSON.stringify({ mean: avg, median: sorted[Math.floor(SPAN / 2)], meanPct }) + ';\n' +
   'window.DIGIT_ODDS = ' + JSON.stringify(digitOdds) + ';\n');
 
-// Mêmes données pour les fonctions serveur de Vercel (/api), qui recalculent l'EP de chaque tirage.
+// Mêmes données pour les fonctions serveur de Vercel (/api), qui recalculent l'XP de chaque tirage.
 fs.mkdirSync(path.join(ROOT, 'data'), { recursive: true });
 fs.writeFileSync(path.join(ROOT, 'data/badge-meta.json'), JSON.stringify(BADGE_META));
 fs.writeFileSync(path.join(ROOT, 'data/percentiles.json'), JSON.stringify(table));
