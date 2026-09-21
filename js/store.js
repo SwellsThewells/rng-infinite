@@ -96,6 +96,20 @@
       this.save();
     },
 
+    // Adopte le joueur renvoyé par la connexion Google (le même sur tous les appareils).
+    setIdentity({ id, secret, google }) {
+      Object.assign(this.state.player, { id, secret, google });
+      this.save();
+      this.emit();
+    },
+
+    // Déconnexion : l'appareil repart avec un nouveau joueur anonyme ; le compte Google garde le sien.
+    signOut() {
+      this.state.player = { id: uid(), secret: uid() + uid(), name: '' };
+      this.save();
+      this.emit();
+    },
+
     // Recalcule l'EP stocké de chaque tirage quand la version des scores change.
     rescore(scoreOf, version) {
       if (this.state.scoreVersion === version) return 0;

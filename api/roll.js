@@ -19,13 +19,15 @@ module.exports = async (req, res) => {
     if (!name) return send(res, 400, { error: 'Pick a player name first' });
 
     // Le premier tirage réserve l'identifiant ; ensuite seul le détenteur du secret peut tirer sous cet id.
+    // Les appareils connectés avec Google ont chacun leur propre secret (ensemble player:<id>:secrets).
     const secretHash = sha256(secret);
-    const [, owner, cooldown] = await redis([
+    const [, owner, member, cooldown] = await redis([
       ['SET', `player:${playerId}:secret`, secretHash, 'NX'],
       ['GET', `player:${playerId}:secret`],
+      ['SISMEMBER', `player:${playerId}:secrets`, secretHash],
       ['SET', `cooldown:${playerId}`, '1', 'PX', COOLDOWN_MS, 'NX'],
     ]);
-    if (owner !== secretHash) return send(res, 403, { error: 'This player id belongs to someone else' });
+    if (owner !== secretHash && Number(member) !== 1) return send(res, 403, { error: 'This player id belongs to someone else' });
     if (cooldown !== 'OK') return send(res, 429, { error: 'Too fast, wait for the reveal to finish' });
 
     const n = crypto.randomInt(0, 1000001);

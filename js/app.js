@@ -29,7 +29,7 @@
 
   // ---------------------------------------------------------------- serveur (classement en ligne, hébergé sur Vercel)
   // Sur Vercel l'API est sur le même domaine ; depuis GitHub Pages on appelle le déploiement Vercel.
-  const API_BASE = location.hostname.endsWith('github.io') ? 'https://rng-infinite.vercel.app' : '';
+  const API_BASE = location.hostname.endsWith('github.io') ? window.RNG_CONFIG.apiBase : '';
   const Online = {
     async request(pathname, options = {}) {
       const ctrl = new AbortController();
@@ -493,8 +493,9 @@
       <div class="field">
         <label for="set-name">Player name</label>
         <input class="input" id="set-name" maxlength="20" autocomplete="off" value="${esc(Store.player.name)}" placeholder="Player">
-        <span class="panel-note">Used on the leaderboard once it goes online.</span>
+        <span class="panel-note">Shown on the leaderboard.</span>
       </div>
+      ${googleAccountHTML()}
       <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal'], SPEEDS[s.speed] ? s.speed : 'normal', SPEED_LABELS)}</div>
       <div class="field"><label>Theme</label>${seg('theme', ['light', 'system', 'dark'], s.theme)}</div>
       <div class="danger-zone">
@@ -507,6 +508,10 @@
     `, m => {
       const name = m.querySelector('#set-name');
       name.addEventListener('input', () => { Store.setPlayerName(name.value); });
+      const googleSlot = m.querySelector('#google-btn');
+      if (googleSlot) renderGoogleButton(googleSlot);
+      const googleOut = m.querySelector('#google-out');
+      if (googleOut) googleOut.addEventListener('click', signOutGoogle);
       m.querySelectorAll('[data-seg]').forEach(group => {
         group.addEventListener('click', e => {
           const btn = e.target.closest('button');
@@ -609,24 +614,106 @@
   }
 
   // ---------------------------------------------------------------- tirage
-  function askName(then) {
+  function askName(then, suggested = '') {
+    const offerGoogle = googleEnabled() && !Store.player.google;
     openModal(`
       <h2>Choose your player name</h2>
       <p class="panel-note" style="margin:-.3rem 0 1rem">It appears on the leaderboard next to your best rolls.</p>
       <form id="name-form">
-        <input class="input" id="name-input" maxlength="20" autocomplete="off" placeholder="Your name" style="width:100%">
+        <input class="input" id="name-input" maxlength="20" autocomplete="off" placeholder="Your name" value="${esc(suggested)}" style="width:100%">
         <div class="actions"><button class="btn-roll small" type="submit">Save & roll</button></div>
-      </form>`, m => {
+      </form>
+      ${offerGoogle ? '<div class="or-google"><span class="panel-note">or sign in to keep your player on every device</span><div id="google-btn" class="google-btn"></div></div>' : ''}`, m => {
       const input = m.querySelector('#name-input');
       input.focus();
       m.querySelector('#name-form').addEventListener('submit', e => {
         e.preventDefault();
         if (!input.value.trim()) { input.focus(); return; }
+        afterGoogle = null;
         Store.setPlayerName(input.value);
         closeModal();
         then();
       });
+      if (offerGoogle) {
+        afterGoogle = then;
+        renderGoogleButton(m.querySelector('#google-btn'));
+      }
     });
+  }
+
+  // ---------------------------------------------------------------- connexion Google (Google Identity Services)
+  // Le compte Google sert d'identité de joueur : le serveur vérifie le jeton et renvoie le même joueur sur chaque appareil.
+  const googleEnabled = () => !!window.RNG_CONFIG.googleClientId;
+  let googleReady = null;
+  let afterGoogle = null; // action à reprendre après la connexion (ex. le tirage qui attendait un nom)
+
+  function loadGoogle() {
+    if (!googleReady) {
+      googleReady = new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = 'https://accounts.google.com/gsi/client';
+        script.async = true;
+        script.onload = () => {
+          google.accounts.id.initialize({ client_id: window.RNG_CONFIG.googleClientId, callback: onGoogleCredential, auto_select: false });
+          resolve(google.accounts.id);
+        };
+        script.onerror = () => { googleReady = null; reject(new Error('Google sign-in could not load')); };
+        document.head.appendChild(script);
+      });
+    }
+    return googleReady;
+  }
+
+  async function renderGoogleButton(slot) {
+    try {
+      const gid = await loadGoogle();
+      if (!slot.isConnected) return;
+      const dark = document.documentElement.classList.contains('dark');
+      gid.renderButton(slot, { theme: dark ? 'filled_black' : 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: 260 });
+    } catch (err) {
+      slot.innerHTML = '<span class="panel-note">Google sign-in is unavailable right now.</span>';
+    }
+  }
+
+  async function onGoogleCredential(response) {
+    try {
+      const p = Store.player;
+      const data = await Online.request('/api/auth', {
+        method: 'POST',
+        body: JSON.stringify({ credential: response.credential, playerId: p.id, secret: p.secret }),
+      });
+      Store.setIdentity({ id: data.playerId, secret: data.secret, google: { email: data.email } });
+      if (data.name) Store.setPlayerName(data.name);
+      closeModal();
+      toast(`Signed in as ${data.email || 'your Google account'}`);
+      const next = afterGoogle;
+      afterGoogle = null;
+      if (!Store.player.name) askName(next || (() => {}), (data.givenName || '').slice(0, 20));
+      else if (next) next();
+      else if (currentView !== 'result') route();
+    } catch (err) {
+      toast('Google sign-in failed, try again');
+    }
+  }
+
+  function signOutGoogle() {
+    if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
+    Store.signOut();
+    closeModal();
+    toast('Signed out: new anonymous player on this device');
+    route();
+  }
+
+  function googleAccountHTML() {
+    if (!googleEnabled()) return '';
+    const g = Store.player.google;
+    return g
+      ? `<div class="field"><label>Account</label>
+          <div class="google-row"><span>Signed in with Google as <b>${esc(g.email || 'your account')}</b></span><button class="btn" id="google-out">Sign out</button></div>
+          <span class="panel-note">Your player and leaderboard spots follow you on every device.</span></div>`
+      : `<div class="field"><label>Account</label>
+          <div id="google-btn" class="google-btn"></div>
+          <span class="panel-note">Sign in to keep the same player (and your leaderboard spots) on every device. Your roll history stays on each device.</span></div>`;
   }
 
   // Détail d'un nombre tiré par quelqu'un d'autre (classement, meilleur tirage du jour).
@@ -686,11 +773,15 @@
       online = await Online.roll();
       n = online.n;
     } catch (err) {
-      if (err.status === 403) Store.resetIdentity();
+      const wasGoogle = !!Store.player.google;
+      if (err.status === 403) {
+        if (wasGoogle) Store.signOut(); else Store.resetIdentity();
+      }
       if (err.status === 429 || err.status === 403) {
         rollPending = false;
         buttons.forEach(b => { b.disabled = false; });
-        toast(err.status === 429 ? 'Wait for the reveal to finish' : 'Player id reset, roll again');
+        toast(err.status === 429 ? 'Wait for the reveal to finish'
+          : wasGoogle ? 'Session expired: sign in with Google again to get your player back' : 'Player id reset, roll again');
         return;
       }
       n = Engine.roll();
@@ -1322,6 +1413,7 @@
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Your full history stays in this browser. Use the player menu to export it (JSON) or move it to another device.</p>
         <p class="muted">Inspired by the daily game rngdle.com — this version removes the daily limit and adds history and stats.</p>
+        <p class="muted"><a href="privacy.html">Privacy policy</a></p>
         <p><a class="btn" href="#/">Go roll</a></p>
       </div>`;
   }

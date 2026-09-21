@@ -1,6 +1,7 @@
 // Teste les fonctions /api sans Vercel ni Upstash : fetch est remplacé par un faux Redis en mémoire.
 //   node tools/test-api.mjs
 import path from 'node:path';
+import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
@@ -10,6 +11,12 @@ const require = createRequire(import.meta.url);
 
 process.env.KV_REST_API_URL = 'https://fake-redis.test';
 process.env.KV_REST_API_TOKEN = 'test-token';
+process.env.GOOGLE_CLIENT_ID = 'test-client.apps.googleusercontent.com';
+
+// Fausse paire de clés "Google" : les jetons de test sont signés avec, et fetch sert la clé publique.
+const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
+const { privateKey: googlePrivate, publicKey: googlePublic } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const googleJwk = { ...googlePublic.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' };
 
 // ---------------------------------------------------------------- faux Redis (seulement les commandes utilisées)
 const db = new Map();
@@ -33,9 +40,13 @@ const COMMANDS = {
   ZREVRANGE: (k, a, b) => sortedDesc(k).slice(Number(a), Number(b) + 1).flatMap(([m, s]) => [m, String(s)]),
   ZCARD: k => (db.has(k) ? db.get(k).size : 0),
   HINCRBY(k, f, by) { const h = hash(k), v = Number(h.get(f) || 0) + Number(by); h.set(f, String(v)); return v; },
+  HGET: (k, f) => (db.has(k) && db.get(k).has(f) ? db.get(k).get(f) : null),
+  SADD(k, m) { const s = db.get(k) || (db.set(k, new Set()), db.get(k)); const had = s.has(m); s.add(m); return had ? 0 : 1; },
+  SISMEMBER: (k, m) => (db.has(k) && db.get(k).has(m) ? 1 : 0),
 };
 let calls = 0;
 globalThis.fetch = async (url, opts) => {
+  if (url === GOOGLE_CERTS_URL) return { ok: true, json: async () => ({ keys: [googleJwk] }) };
   assert.equal(url, 'https://fake-redis.test/pipeline');
   assert.equal(opts.headers.Authorization, 'Bearer test-token');
   calls++;
@@ -127,4 +138,58 @@ for (const period of ['week', 'all', 'nimportequoi']) {
   assert.ok(['day', 'week', 'all'].includes(r.body.period));
 }
 
-console.log(`OK — ${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);
+// 8. Connexion Google.
+const auth = require(path.join(ROOT, 'api/auth.js'));
+const b64 = obj => Buffer.from(JSON.stringify(obj)).toString('base64url');
+function googleToken(claims, key = googlePrivate) {
+  const head = b64({ alg: 'RS256', kid: 'test-key', typ: 'JWT' });
+  const body = b64({
+    iss: 'https://accounts.google.com', aud: process.env.GOOGLE_CLIENT_ID,
+    exp: Math.floor(Date.now() / 1000) + 3600, email_verified: true, ...claims,
+  });
+  return `${head}.${body}.${crypto.sign('RSA-SHA256', Buffer.from(`${head}.${body}`), key).toString('base64url')}`;
+}
+const signIn = (claims, device) => call(auth, { method: 'POST', body: { credential: googleToken(claims), ...device } });
+
+// Alice relie son compte : elle garde son joueur (et son nom), et le secret reçu permet de tirer.
+r = await signIn({ sub: 'g-alice', email: 'alice@example.com', given_name: 'Alice' }, { playerId: alice.playerId, secret: alice.secret });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+assert.equal(r.body.playerId, alice.playerId);
+assert.equal(r.body.name, 'Alice');
+assert.equal(r.body.email, 'alice@example.com');
+const aliceSession = r.body.secret;
+db.delete(`cooldown:${alice.playerId}`);
+r = await call(roll, { method: 'POST', body: { playerId: alice.playerId, secret: aliceSession, name: 'Alice' } });
+assert.equal(r.status, 200, 'le secret reçu à la connexion permet de tirer');
+
+// Sur un autre appareil jamais utilisé, le même compte retrouve le joueur d'Alice.
+r = await signIn({ sub: 'g-alice' }, { playerId: 'c'.repeat(16), secret: '3'.repeat(32) });
+assert.equal(r.body.playerId, alice.playerId);
+assert.notEqual(r.body.secret, aliceSession, 'un secret par appareil');
+
+// Le secret de l'appareil d'origine reste valable.
+db.delete(`cooldown:${alice.playerId}`);
+assert.equal((await call(roll, { method: 'POST', body: alice })).status, 200);
+
+// Un autre compte Google sur l'appareil d'Alice n'hérite pas de son joueur.
+r = await signIn({ sub: 'g-carol' }, { playerId: alice.playerId, secret: aliceSession });
+assert.equal(r.status, 200);
+assert.notEqual(r.body.playerId, alice.playerId);
+
+// Un appareil qui prétend être Bob sans son secret ne récupère pas le joueur de Bob.
+r = await signIn({ sub: 'g-mallory' }, { playerId: bob.playerId, secret: '4'.repeat(32) });
+assert.notEqual(r.body.playerId, bob.playerId);
+
+// Jetons refusés : autre clé, autre application, expiré, pas un jeton.
+const { privateKey: otherKey } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
+const badTokens = [
+  googleToken({ sub: 'x' }, otherKey),
+  googleToken({ sub: 'x', aud: 'another-app.apps.googleusercontent.com' }),
+  googleToken({ sub: 'x', exp: Math.floor(Date.now() / 1000) - 10 }),
+  'not-a-token',
+];
+for (const credential of badTokens) {
+  assert.equal((await call(auth, { method: 'POST', body: { credential } })).status, 401);
+}
+
+console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);
