@@ -8,6 +8,25 @@
   const KEY = 'rnginf.v1';
   const MAX_ROLL = 1000000;
 
+  // Un même tirage peut porter l'heure du serveur ou, enregistré par une ancienne version du site, celle de l'appareil
+  // (quelques dixièmes de seconde d'écart) : même nombre à moins d'une minute = même tirage.
+  const SAME_ROLL_MS = 60000;
+  function rollSet(pairs = []) {
+    const byN = new Map();
+    const has = (n, t) => (byN.get(n) || []).some(x => Math.abs(x - t) <= SAME_ROLL_MS);
+    const set = {
+      has,
+      add(n, t) {
+        if (has(n, t)) return false;
+        if (!byN.has(n)) byN.set(n, []);
+        byN.get(n).push(t);
+        return true;
+      },
+    };
+    for (const [n, t] of pairs) set.add(n, t);
+    return set;
+  }
+
   function uid() {
     const bytes = new Uint8Array(8);
     try { crypto.getRandomValues(bytes); } catch (e) { for (let i = 0; i < 8; i++) bytes[i] = Math.floor(Math.random() * 256); }
@@ -113,11 +132,10 @@
 
     // Ajoute les tirages du compte ([nombre, timestamp]) que cet appareil n'a pas encore ; renvoie le nombre ajouté.
     mergeRolls(entries, scoreOf) {
-      const seen = new Set(this.state.rolls.map(r => r[2] + ':' + r[0]));
+      const known = rollSet(this.state.rolls.map(r => [r[0], r[2]]));
       let added = 0;
       for (const [n, t] of entries) {
-        if (seen.has(t + ':' + n)) continue;
-        seen.add(t + ':' + n);
+        if (!known.add(n, t)) continue;
         this.state.rolls.push([n, scoreOf(n), t]);
         added++;
       }
@@ -128,6 +146,21 @@
       }
       return added;
     },
+
+    // Retire les doublons d'un même tirage (voir rollSet) : la synchronisation du 21/09/2026 en a copié quelques-uns.
+    dedupeRolls() {
+      const known = rollSet();
+      const kept = this.state.rolls.filter(r => known.add(r[0], r[2]));
+      const removed = this.state.rolls.length - kept.length;
+      if (removed) {
+        this.state.rolls = kept;
+        this.save();
+        this.emit();
+      }
+      return removed;
+    },
+
+    rollSet,
 
     // Recalcule l'XP stocké de chaque tirage quand la version des scores change.
     rescore(scoreOf, version) {

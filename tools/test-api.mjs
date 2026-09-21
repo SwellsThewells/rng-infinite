@@ -193,6 +193,11 @@ assert.ok(r.body.rolls.every((x, i, all) => i === 0 || all[i - 1][1] <= x[1]), '
 r = await call(history, { method: 'POST', body: { ...aliceTab, add: [[42, t0]], fetch: false } });
 assert.equal(r.body.stored, 0, 'renvoyer un tirage déjà connu ne crée pas de doublon');
 assert.equal(r.body.rolls, undefined);
+// Le même tirage à l'heure de l'appareil (0,7 s d'écart) n'est pas un nouveau tirage ; le même nombre 2 min plus tard, si.
+r = await call(history, { method: 'POST', body: { ...aliceTab, add: [[42, t0 + 700], [42, t0 + 800]], fetch: false } });
+assert.equal(r.body.stored, 0, 'même nombre à moins d\'une minute = même tirage');
+r = await call(history, { method: 'POST', body: { ...aliceTab, add: [[42, t0 + 120000]], fetch: false } });
+assert.equal(r.body.stored, 1, 'un vrai second 42 est gardé');
 
 assert.equal((await call(history, { method: 'POST', body: { ...aliceTab, secret: '9'.repeat(32) } })).status, 403);
 assert.equal((await call(history, { method: 'POST', body: { playerId: 'nope', secret: 'x' } })).status, 400);
@@ -246,6 +251,7 @@ assert.equal(r.body.best[0].n, 777777);
 assert.equal(r.body.rank, null);
 // Le même tirage envoyé plus tard par l'appareil (heure de l'appareil ≠ heure du serveur) n'est pas compté deux fois.
 run([['ZADD', `hist:${legacy}`, t0 + 4000, `${t0 + 4000}:777777`]]);
+run([['ZADD', `hist:${legacy}`, t0 + 4700, `${t0 + 4700}:777777`]]); // doublon déjà en base (heure de l'appareil)
 r = await call(profile, { url: '/api/profile?name=Emile' });
 assert.equal(r.body.rolls, 1);
 assert.deepEqual(r.body.best.map(x => x.n), [777777]);

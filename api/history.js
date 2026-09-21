@@ -2,7 +2,7 @@
 // Historique complet d'un joueur, pour le retrouver sur tous ses appareils (joueurs connectés avec Google).
 // Les tirages faits en ligne y sont ajoutés par /api/roll ; "add" y verse ceux que seul l'appareil connaissait
 // (hors ligne, ou d'avant la synchronisation). Réponse : tous les tirages, du plus ancien au plus récent.
-const { redis, ownsPlayer, historyKey, HISTORY_CAP, cors, send } = require('./_lib');
+const { redis, ownsPlayer, historyKey, HISTORY_CAP, rollSet, cors, send } = require('./_lib');
 
 const MAX_ADD = 5000; // par requête ; le site découpe au-delà
 const MIN_T = Date.UTC(2024, 0, 1);
@@ -25,9 +25,16 @@ module.exports = async (req, res) => {
 
     let stored = 0;
     if (valid.length) {
-      const zadd = ['ZADD', key];
-      for (const [n, t] of valid) zadd.push(t, `${t}:${n}`);
-      [stored] = await redis([zadd, ['ZREMRANGEBYRANK', key, 0, -(HISTORY_CAP + 1)]]);
+      // Un tirage déjà connu, même à quelques secondes près (voir rollSet), n'est pas ajouté une 2e fois.
+      const [existing] = await redis([['ZRANGE', key, 0, -1]]);
+      const known = rollSet();
+      for (const m of existing) { const [t, n] = m.split(':').map(Number); known.add(n, t); }
+      const fresh = valid.filter(([n, t]) => known.add(n, t));
+      if (fresh.length) {
+        const zadd = ['ZADD', key];
+        for (const [n, t] of fresh) zadd.push(t, `${t}:${n}`);
+        [stored] = await redis([zadd, ['ZREMRANGEBYRANK', key, 0, -(HISTORY_CAP + 1)]]);
+      }
     }
     if (body.fetch === false) return send(res, 200, { stored: Number(stored) });
 

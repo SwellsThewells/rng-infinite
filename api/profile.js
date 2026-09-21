@@ -2,7 +2,7 @@
 // Profil public d'un joueur, ouvert depuis le classement : ses meilleurs tirages et sa collection de badges.
 // Calculé à partir de son historique (hist:<id>), comme ses propres pages History et Badges ; le classement,
 // lui, ne compte que les tirages faits par le serveur. Ni l'identifiant ni la liste complète des tirages ne sortent d'ici.
-const { engine, redis, cleanName, nameKey, historyKey, cors, send } = require('./_lib');
+const { engine, redis, cleanName, nameKey, historyKey, rollSet, cors, send } = require('./_lib');
 
 const BEST_LIMIT = 10;
 
@@ -38,7 +38,9 @@ module.exports = async (req, res) => {
       const d = JSON.parse(bestAll);
       if (!members.some(m => m.endsWith(`:${d.n}`))) members.push(`${d.t}:${d.n}`);
     }
-    const rolls = members.map(m => m.split(':').map(Number)).sort((a, b) => a[0] - b[0]);
+    // Les doublons d'un même tirage déjà en base (voir rollSet) ne comptent qu'une fois.
+    const known = rollSet();
+    const rolls = members.map(m => m.split(':').map(Number)).sort((a, b) => a[0] - b[0]).filter(([t, n]) => known.add(n, t));
 
     // ~20 µs par nombre distinct : 2 s au pire pour un historique plein (100 000 tirages).
     const analyses = new Map();

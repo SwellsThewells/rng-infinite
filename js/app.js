@@ -774,8 +774,8 @@
       syncing = (async () => {
         try {
           const server = await Online.history();
-          const onServer = new Set(server.rolls.map(([n, t]) => t + ':' + n));
-          const localOnly = Store.rolls.filter(r => !onServer.has(r[2] + ':' + r[0])).map(r => [r[0], r[2]]);
+          const onServer = Store.rollSet(server.rolls);
+          const localOnly = Store.rolls.filter(r => !onServer.has(r[0], r[2])).map(r => [r[0], r[2]]);
           const added = Store.mergeRolls(server.rolls, n => Engine.scoreOf(n));
           for (let i = 0; i < localOnly.length; i += 2000) await Online.history(localOnly.slice(i, i + 2000), false);
           if (added) {
@@ -798,8 +798,8 @@
     try {
       await syncHistory();
       const server = await Online.history();
-      const onServer = new Set(server.rolls.map(([n, t]) => t + ':' + n));
-      if (!Store.rolls.every(r => onServer.has(r[2] + ':' + r[0]))) throw new Error('not synced');
+      const onServer = Store.rollSet(server.rolls);
+      if (!Store.rolls.every(r => onServer.has(r[0], r[2]))) throw new Error('not synced');
     } catch (err) {
       toast('Could not save your history to your account, try signing out again');
       return;
@@ -1679,6 +1679,7 @@
     for (const b of window.BADGE_META) for (const ch of b.id + b.score) h = (h * 31 + ch.charCodeAt(0)) | 0;
     return String(h);
   })();
+  Store.dedupeRolls();
   Store.rescore(n => Engine.scoreOf(n), SCORE_VERSION);
 
   document.addEventListener('visibilitychange', () => {
