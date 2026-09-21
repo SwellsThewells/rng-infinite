@@ -31,6 +31,8 @@ const COMMANDS = {
   ZADD(k, score, m) { const z = zset(k), added = z.has(m) ? 0 : 1; z.set(m, Number(score)); return added; },
   ZREVRANK: (k, m) => { const i = sortedDesc(k).findIndex(([id]) => id === m); return i < 0 ? null : i; },
   ZREVRANGE: (k, a, b) => sortedDesc(k).slice(Number(a), Number(b) + 1).flatMap(([m, s]) => [m, String(s)]),
+  ZCARD: k => (db.has(k) ? db.get(k).size : 0),
+  HINCRBY(k, f, by) { const h = hash(k), v = Number(h.get(f) || 0) + Number(by); h.set(f, String(v)); return v; },
 };
 let calls = 0;
 globalThis.fetch = async (url, opts) => {
@@ -94,6 +96,9 @@ r = await call(leaderboard, { url: `/api/leaderboard?period=day&me=${alice.playe
 assert.equal(r.status, 200);
 assert.equal(r.body.entries.length, 2);
 assert.equal(r.body.rollsToday, 2);
+assert.equal(r.body.rolls, 2);
+assert.equal(r.body.players, 2);
+assert.deepEqual(r.body.entries.map(e => e.rolls), [1, 1]);
 const [first, second] = r.body.entries;
 assert.ok(first.s >= second.s);
 assert.deepEqual(r.body.entries.map(e => e.rank), [1, 2]);
@@ -111,7 +116,9 @@ const aliceSecond = r.body;
 r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
 const expectedBest = aliceSecond.s > aliceFirst.s ? aliceSecond : aliceFirst;
 assert.equal(r.body.entries.find(e => e.name === 'Alice').n, expectedBest.n);
-assert.equal(r.body.rollsAll, 3);
+assert.equal(r.body.rolls, 3);
+assert.equal(r.body.players, 2);
+assert.equal(r.body.entries.find(e => e.name === 'Alice').rolls, 2, 'le compteur augmente même quand le tirage ne bat pas le record');
 
 // 7. Périodes et paramètres inconnus.
 for (const period of ['week', 'all', 'nimportequoi']) {

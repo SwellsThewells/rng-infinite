@@ -14,10 +14,11 @@ module.exports = async (req, res) => {
     const t = Date.now();
     const scope = scopes(t).find(p => p.period === period);
 
-    const [flat, rollsToday, rollsAll, myRank] = await redis([
+    const [flat, rolls, rollsToday, players, myRank] = await redis([
       ['ZREVRANGE', scope.lb, 0, LIMIT - 1, 'WITHSCORES'],
+      ['GET', scope.total],
       ['GET', `rolls:day:${dayKey(t)}`],
-      ['GET', 'rolls:all'],
+      ['ZCARD', scope.lb],
       ['ZREVRANK', scope.lb, me || '-'],
     ]);
     const ids = [];
@@ -25,19 +26,31 @@ module.exports = async (req, res) => {
     const meOutsideTop = me && myRank !== null && Number(myRank) >= LIMIT;
     const wanted = meOutsideTop ? [...ids, me] : ids;
 
-    let details = [], names = [];
-    if (wanted.length) [details, names] = await redis([['HMGET', scope.best, ...wanted], ['HMGET', 'names', ...wanted]]);
+    let details = [], names = [], counts = [];
+    if (wanted.length) {
+      [details, names, counts] = await redis([
+        ['HMGET', scope.best, ...wanted],
+        ['HMGET', 'names', ...wanted],
+        ['HMGET', scope.count, ...wanted],
+      ]);
+    }
 
     // Les identifiants ne sortent jamais du serveur : seul un drapeau "me" signale la ligne du joueur.
+    // rolls = nombre de tirages du joueur sur la période (compté depuis le 2026-09-21, 0 pour les tirages d'avant).
     const toEntry = (id, i, rank) => {
       if (!details[i]) return null;
       const d = JSON.parse(details[i]);
-      return { rank, name: names[i] || 'Player', n: d.n, s: d.s, t: d.t, me: id === me };
+      return { rank, name: names[i] || 'Player', n: d.n, s: d.s, t: d.t, rolls: Number(counts[i] || 0), me: id === me };
     };
     const entries = ids.map((id, i) => toEntry(id, i, i + 1)).filter(Boolean);
     const mine = meOutsideTop ? toEntry(me, ids.length, Number(myRank) + 1) : null;
 
-    return send(res, 200, { period, entries, mine, rollsToday: Number(rollsToday || 0), rollsAll: Number(rollsAll || 0) });
+    return send(res, 200, {
+      period, entries, mine,
+      rolls: Number(rolls || 0),
+      players: Number(players || 0),
+      rollsToday: Number(rollsToday || 0),
+    });
   } catch (err) {
     return send(res, err.status || 500, { error: err.message });
   }

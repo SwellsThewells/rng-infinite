@@ -1278,8 +1278,10 @@
     }
     if (currentView !== 'leaderboard' || period !== lbState.period || !$('#lb-list')) return;
     const when = { day: 'today', week: 'this week', all: 'yet' }[period];
+    const span = { day: 'today', week: 'this week', all: 'in total' }[period];
+    const summary = `<div class="lb-summary"><b>${fmt(data.rolls)}</b> ${data.rolls === 1 ? 'roll' : 'rolls'} ${span} · <b>${fmt(data.players)}</b> ${data.players === 1 ? 'player' : 'players'}</div>`;
     $('#lb-list').innerHTML = data.entries.length
-      ? data.entries.map(lbRowHTML).join('') + (data.mine ? `<div class="lb-gap">···</div>${lbRowHTML(data.mine)}` : '')
+      ? summary + data.entries.map(lbRowHTML).join('') + (data.mine ? `<div class="lb-gap">···</div>${lbRowHTML(data.mine)}` : '')
       : `<div class="empty">No rolls ${when}, be the first!</div>`;
     // Rafraîchi seulement quand l'onglet est visible : un onglet oublié ne doit pas vider le quota gratuit de la base.
     if (!document.hidden) lbTimer = setTimeout(() => { if (currentView === 'leaderboard') drawLeaderboard(); }, 60000);
@@ -1291,7 +1293,7 @@
     return `
       <div class="lb-row${e.me ? ' me' : ''}" data-number="${e.n}" data-caption="${esc(`#${e.rank} · ${e.name} · ${relTime(e.t)}`)}">
         <span class="lb-rank">${medal || '#' + e.rank}</span>
-        <span class="lb-name">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</span>
+        <span class="lb-name">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}${e.rolls ? `<span class="lb-sub">${plural(e.rolls, 'roll')}</span>` : ''}</span>
         <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
         <span class="lb-ep mono">${fmt(e.s)} EP</span>
       </div>`;

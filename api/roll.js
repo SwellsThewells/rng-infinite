@@ -2,7 +2,7 @@
 // Le serveur tire le nombre (personne ne peut choisir son 1337), calcule l'EP avec le moteur du site,
 // puis met à jour le meilleur tirage du joueur pour le jour, la semaine et tous les temps.
 const crypto = require('node:crypto');
-const { engine, redis, scopes, dayKey, cleanName, sha256, cors, send } = require('./_lib');
+const { engine, redis, scopes, cleanName, sha256, cors, send } = require('./_lib');
 
 // Une révélation dure au moins ~10 s : 8 s minimum entre deux tirages ne gêne jamais un vrai joueur.
 const COOLDOWN_MS = 8000;
@@ -37,13 +37,12 @@ module.exports = async (req, res) => {
     const current = await redis(periods.map(p => ['ZSCORE', p.lb, playerId]));
     const improved = periods.filter((p, i) => current[i] === null || s > Number(current[i]));
     const entry = JSON.stringify({ n, s, t });
-    const today = `rolls:day:${dayKey(t)}`;
-    const writes = [
-      ['HSET', 'names', playerId, name],
-      ['INCR', today],
-      ['EXPIRE', today, 8 * 86400],
-      ['INCR', 'rolls:all'],
-    ];
+    const writes = [['HSET', 'names', playerId, name]];
+    // Nombre de tirages de la période, au total et par joueur (affichés au classement).
+    for (const p of periods) {
+      writes.push(['INCR', p.total], ['HINCRBY', p.count, playerId, 1]);
+      if (p.ttl) writes.push(['EXPIRE', p.total, p.ttl], ['EXPIRE', p.count, p.ttl]);
+    }
     for (const p of improved) {
       writes.push(['ZADD', p.lb, s, playerId], ['HSET', p.best, playerId, entry]);
       if (p.ttl) writes.push(['EXPIRE', p.lb, p.ttl], ['EXPIRE', p.best, p.ttl]);
