@@ -743,6 +743,10 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 .lb-name .muted { font-weight: 500; text-transform: none; }
 .lb-rolls { font-size: .78rem; color: var(--prose-2); text-align: right; white-space: nowrap; }
 
+.field-error { margin: .45rem 0 0; font-size: .74rem; color: var(--danger); }
+.credit { margin-top: 2.4rem; font-size: .72rem; color: var(--prose-3); }
+.credit a { color: var(--prose-2); }
+
 /* connexion Google */
 /* L'iframe de Google est en color-scheme clair : si la page est en sombre, le navigateur lui peint un fond blanc opaque.
    Déclarer le cadre en clair aligne les deux et rend le fond transparent (le bouton garde son thème sombre). */

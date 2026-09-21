@@ -50,6 +50,10 @@
     leaderboard(period) {
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
     },
+    claimName(name) {
+      const p = Store.player;
+      return this.request('/api/name', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name }) });
+    },
     // Sans "add" : renvoie tout l'historique du compte. Avec "add" : y verse ces tirages.
     history(add, fetchAll = true) {
       const p = Store.player;
@@ -498,7 +502,8 @@
       <div class="field">
         <label for="set-name">Player name</label>
         <input class="input" id="set-name" maxlength="20" autocomplete="off" value="${esc(Store.player.name)}" placeholder="Player">
-        <span class="panel-note">Shown on the leaderboard.</span>
+        <p class="field-error" id="set-name-error" hidden></p>
+        <span class="panel-note">Shown on the leaderboard. Each name belongs to one player only.</span>
       </div>
       ${googleAccountHTML()}
       <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal'], SPEEDS[s.speed] ? s.speed : 'normal', SPEED_LABELS)}</div>
@@ -511,8 +516,23 @@
       </div>
       <div class="actions"><button class="btn" id="set-done">Done</button></div>
     `, m => {
+      // Le nom n'est enregistré qu'une fois validé par le serveur (Entrée ou sortie du champ).
       const name = m.querySelector('#set-name');
-      name.addEventListener('input', () => { Store.setPlayerName(name.value); });
+      const nameError = m.querySelector('#set-name-error');
+      name.addEventListener('change', async () => {
+        const previous = Store.player.name;
+        if (!name.value.trim() || name.value.trim() === previous) { name.value = previous; return; }
+        const result = await saveName(name.value);
+        if (result.ok) {
+          nameError.hidden = true;
+          toast('Name saved');
+          return;
+        }
+        name.value = previous;
+        nameError.textContent = result.error;
+        nameError.hidden = false;
+        if (!name.isConnected) toast(result.error);
+      });
       const googleSlot = m.querySelector('#google-btn');
       if (googleSlot) renderGoogleButton(googleSlot);
       const googleOut = m.querySelector('#google-out');
@@ -595,6 +615,7 @@
               <div class="eyebrow">Recent rolls</div>
               <div class="chips">${recent.map(({ r, i }) => `<button class="num-card sm" data-tier="${Engine.cardTier(r[1])}" data-roll="${i}">${r[0]}</button>`).join('')}</div>
             </div>` : ''}
+          <p class="credit">Based on <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>, without the daily limit</p>
         </section>
       </div>`;
     $('#roll-btn').addEventListener('click', startRoll);
@@ -619,23 +640,53 @@
   }
 
   // ---------------------------------------------------------------- tirage
-  function askName(then, suggested = '') {
+  // Réserve le nom sur le serveur (un nom = un seul joueur). Serveur injoignable : on le garde localement,
+  // le serveur tranchera au prochain tirage.
+  async function saveName(raw) {
+    const name = String(raw).trim().slice(0, 20);
+    try {
+      const data = await Online.claimName(name);
+      Store.setPlayerName(data.name || name);
+      return { ok: true };
+    } catch (err) {
+      if (err.status === 409) {
+        const hint = googleEnabled() && !Store.player.google ? ', or sign in with Google if it is yours' : '';
+        return { ok: false, error: `"${name}" is already taken. Pick another name${hint}.` };
+      }
+      if (err.status === 400) return { ok: false, error: 'That name is not valid.' };
+      Store.setPlayerName(name);
+      return { ok: true };
+    }
+  }
+
+  function askName(then, suggested = '', error = '') {
     const offerGoogle = googleEnabled() && !Store.player.google;
     openModal(`
       <h2>Choose your player name</h2>
-      <p class="panel-note" style="margin:-.3rem 0 1rem">It appears on the leaderboard next to your best rolls.</p>
+      <p class="panel-note" style="margin:-.3rem 0 1rem">It appears on the leaderboard next to your best rolls. Each name belongs to one player only.</p>
       <form id="name-form">
         <input class="input" id="name-input" maxlength="20" autocomplete="off" placeholder="Your name" value="${esc(suggested)}" style="width:100%">
+        <p class="field-error" id="name-error"${error ? '' : ' hidden'}>${esc(error)}</p>
         <div class="actions"><button class="btn-roll small" type="submit">Save & roll</button></div>
       </form>
       ${offerGoogle ? '<div class="or-google"><span class="panel-note">or sign in to keep your player on every device</span><div id="google-btn" class="google-btn"></div></div>' : ''}`, m => {
       const input = m.querySelector('#name-input');
+      const errorEl = m.querySelector('#name-error');
+      const submit = m.querySelector('#name-form button');
       input.focus();
-      m.querySelector('#name-form').addEventListener('submit', e => {
+      m.querySelector('#name-form').addEventListener('submit', async e => {
         e.preventDefault();
         if (!input.value.trim()) { input.focus(); return; }
+        submit.disabled = true;
+        const result = await saveName(input.value);
+        submit.disabled = false;
+        if (!result.ok) {
+          errorEl.textContent = result.error;
+          errorEl.hidden = false;
+          input.focus();
+          return;
+        }
         afterGoogle = null;
-        Store.setPlayerName(input.value);
         closeModal();
         then();
       });
@@ -817,6 +868,12 @@
       online = await Online.roll();
       n = online.n;
     } catch (err) {
+      if (err.status === 409) {
+        rollPending = false;
+        buttons.forEach(b => { b.disabled = false; });
+        askName(() => startRoll(force), '', `"${Store.player.name}" is already taken by another player. Pick a new name.`);
+        return;
+      }
       const wasGoogle = !!Store.player.google;
       if (err.status === 403) {
         if (wasGoogle) Store.signOut(); else Store.resetIdentity();
@@ -1456,7 +1513,7 @@
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. Otherwise they stay in this browser, and you can export them (JSON) from the player menu.</p>
-        <p class="muted">Inspired by the daily game rngdle.com — this version removes the daily limit and adds history and stats.</p>
+        <p class="muted">Based on the daily game <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>: this version removes the daily limit and adds history, stats, Google sign-in and a leaderboard between friends.</p>
         <p class="muted"><a href="privacy.html">Privacy policy</a></p>
         <p><a class="btn" href="#/">Go roll</a></p>
       </div>`;

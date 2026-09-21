@@ -193,4 +193,23 @@ assert.equal((await call(history, { method: 'POST', body: { ...aliceTab, secret:
 assert.equal((await call(history, { method: 'POST', body: { playerId: 'nope', secret: 'x' } })).status, 400);
 assert.equal((await call(history, { method: 'GET' })).status, 405);
 
-console.log(`OK — ${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);
+// 10. Noms uniques, sans tenir compte des majuscules, accents, espaces et ponctuation.
+const nameApi = require(path.join(ROOT, 'api/name.js'));
+const setName = (who, name) => call(nameApi, { method: 'POST', body: { playerId: who.playerId, secret: who.secret, name } });
+assert.equal((await setName(alice, 'Sacha')).status, 200);
+for (const clash of ['sacha', ' SACHA ', 'Sâcha', 'Sa-cha!']) {
+  assert.equal((await setName(bob, clash)).status, 409, `"${clash}" est le même nom que "Sacha"`);
+}
+// Tirer sous un nom pris est refusé, sans déclencher de délai : Bob retire aussitôt avec son propre nom.
+db.delete(`cooldown:${bob.playerId}`);
+assert.equal((await call(roll, { method: 'POST', body: { ...bob, name: 'SACHA' } })).status, 409);
+assert.equal((await call(roll, { method: 'POST', body: bob })).status, 200);
+// Changer de nom libère l'ancien ; le classement affiche le nouveau.
+assert.equal((await setName(alice, 'Alice')).status, 200);
+assert.equal((await setName(bob, 'Sacha')).status, 200);
+r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
+assert.deepEqual(r.body.entries.map(e => e.name).sort(), ['Alice', 'Sacha']);
+assert.equal((await setName(bob, '   ')).status, 400);
+assert.equal((await setName({ ...bob, secret: '9'.repeat(32) }, 'Zed')).status, 403);
+
+console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);
