@@ -1281,7 +1281,8 @@
     $('#lb-list').innerHTML = data.entries.length
       ? data.entries.map(lbRowHTML).join('') + (data.mine ? `<div class="lb-gap">···</div>${lbRowHTML(data.mine)}` : '')
       : `<div class="empty">No rolls ${when}, be the first!</div>`;
-    lbTimer = setTimeout(() => { if (currentView === 'leaderboard') drawLeaderboard(); }, 30000);
+    // Rafraîchi seulement quand l'onglet est visible : un onglet oublié ne doit pas vider le quota gratuit de la base.
+    if (!document.hidden) lbTimer = setTimeout(() => { if (currentView === 'leaderboard') drawLeaderboard(); }, 60000);
   }
 
   function lbRowHTML(e) {
@@ -1389,6 +1390,10 @@
     return String(h);
   })();
   Store.rescore(n => Engine.scoreOf(n), SCORE_VERSION);
+
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && currentView === 'leaderboard') drawLeaderboard();
+  });
 
   window.addEventListener('hashchange', route);
   applyTheme();
