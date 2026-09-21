@@ -1,10 +1,12 @@
-// Teste les fonctions /api sans Vercel ni Upstash : fetch est remplacé par un faux Redis en mémoire.
+// Teste les fonctions /api sans Vercel ni Upstash ni Google : fetch est remplacé par un faux Redis en mémoire
+// et par de fausses clés Google.
 //   node tools/test-api.mjs
 import path from 'node:path';
 import crypto from 'node:crypto';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
+import { fakeRedis } from './fake-redis.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const require = createRequire(import.meta.url);
@@ -18,32 +20,7 @@ const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
 const { privateKey: googlePrivate, publicKey: googlePublic } = crypto.generateKeyPairSync('rsa', { modulusLength: 2048 });
 const googleJwk = { ...googlePublic.export({ format: 'jwk' }), kid: 'test-key', alg: 'RS256', use: 'sig' };
 
-// ---------------------------------------------------------------- faux Redis (seulement les commandes utilisées)
-const db = new Map();
-const zset = k => db.get(k) || (db.set(k, new Map()), db.get(k));
-const hash = k => db.get(k) || (db.set(k, new Map()), db.get(k));
-const sortedDesc = k => [...zset(k).entries()].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? 1 : -1));
-const COMMANDS = {
-  SET(k, v, ...opts) {
-    if (opts.includes('NX') && db.has(k)) return null;
-    db.set(k, v);
-    return 'OK';
-  },
-  GET: k => (db.has(k) ? db.get(k) : null),
-  INCR(k) { const v = Number(db.get(k) || 0) + 1; db.set(k, String(v)); return v; },
-  EXPIRE: () => 1,
-  HSET(k, f, v) { hash(k).set(f, v); return 1; },
-  HMGET: (k, ...fs) => fs.map(f => (db.has(k) && db.get(k).has(f) ? db.get(k).get(f) : null)),
-  ZSCORE: (k, m) => (db.has(k) && db.get(k).has(m) ? String(db.get(k).get(m)) : null),
-  ZADD(k, score, m) { const z = zset(k), added = z.has(m) ? 0 : 1; z.set(m, Number(score)); return added; },
-  ZREVRANK: (k, m) => { const i = sortedDesc(k).findIndex(([id]) => id === m); return i < 0 ? null : i; },
-  ZREVRANGE: (k, a, b) => sortedDesc(k).slice(Number(a), Number(b) + 1).flatMap(([m, s]) => [m, String(s)]),
-  ZCARD: k => (db.has(k) ? db.get(k).size : 0),
-  HINCRBY(k, f, by) { const h = hash(k), v = Number(h.get(f) || 0) + Number(by); h.set(f, String(v)); return v; },
-  HGET: (k, f) => (db.has(k) && db.get(k).has(f) ? db.get(k).get(f) : null),
-  SADD(k, m) { const s = db.get(k) || (db.set(k, new Set()), db.get(k)); const had = s.has(m); s.add(m); return had ? 0 : 1; },
-  SISMEMBER: (k, m) => (db.has(k) && db.get(k).has(m) ? 1 : 0),
-};
+const { db, zset, run } = fakeRedis();
 let calls = 0;
 globalThis.fetch = async (url, opts) => {
   if (url === GOOGLE_CERTS_URL) return { ok: true, json: async () => ({ keys: [googleJwk] }) };
@@ -52,7 +29,7 @@ globalThis.fetch = async (url, opts) => {
   calls++;
   const cmds = JSON.parse(opts.body);
   cmds.forEach(c => c.forEach(x => assert.equal(typeof x, 'string', 'toutes les valeurs partent en texte')));
-  return { ok: true, json: async () => cmds.map(([cmd, ...args]) => ({ result: COMMANDS[cmd](...args) })) };
+  return { ok: true, json: async () => run(cmds) };
 };
 
 // ---------------------------------------------------------------- appel d'une fonction comme le ferait Vercel
@@ -70,6 +47,8 @@ function call(handler, { method = 'GET', url = '/', body } = {}) {
 
 const roll = require(path.join(ROOT, 'api/roll.js'));
 const leaderboard = require(path.join(ROOT, 'api/leaderboard.js'));
+const auth = require(path.join(ROOT, 'api/auth.js'));
+const history = require(path.join(ROOT, 'api/history.js'));
 const { engine } = require(path.join(ROOT, 'api/_lib.js'));
 
 const alice = { playerId: 'a'.repeat(16), secret: '1'.repeat(32), name: 'Alice' };
@@ -102,7 +81,7 @@ r = await call(roll, { method: 'POST', body: bob });
 assert.equal(r.status, 200);
 const bobFirst = r.body;
 
-// 5. Le classement du jour trie par EP et ne révèle aucun identifiant.
+// 5. Le classement du jour trie par EP, compte les tirages et ne révèle aucun identifiant.
 r = await call(leaderboard, { url: `/api/leaderboard?period=day&me=${alice.playerId}` });
 assert.equal(r.status, 200);
 assert.equal(r.body.entries.length, 2);
@@ -117,7 +96,7 @@ assert.equal(r.body.entries.find(e => e.me).name, 'Alice');
 assert.equal(r.body.entries.find(e => !e.me).name, 'Bobscript');
 assert.ok(!JSON.stringify(r.body).includes(alice.playerId), 'aucun id dans la réponse');
 
-// 6. Un tirage plus faible ne remplace pas le meilleur ; un plus fort le remplace (jour, semaine, all-time).
+// 6. Un tirage plus faible ne remplace pas le meilleur ; le compteur augmente quand même.
 const bestKey = [...db.keys()].find(k => k.startsWith('lb:day:'));
 db.delete(`cooldown:${alice.playerId}`);
 zset(bestKey).set(alice.playerId, 1e12); // on simule un meilleur score imbattable
@@ -129,7 +108,7 @@ const expectedBest = aliceSecond.s > aliceFirst.s ? aliceSecond : aliceFirst;
 assert.equal(r.body.entries.find(e => e.name === 'Alice').n, expectedBest.n);
 assert.equal(r.body.rolls, 3);
 assert.equal(r.body.players, 2);
-assert.equal(r.body.entries.find(e => e.name === 'Alice').rolls, 2, 'le compteur augmente même quand le tirage ne bat pas le record');
+assert.equal(r.body.entries.find(e => e.name === 'Alice').rolls, 2);
 
 // 7. Périodes et paramètres inconnus.
 for (const period of ['week', 'all', 'nimportequoi']) {
@@ -139,7 +118,6 @@ for (const period of ['week', 'all', 'nimportequoi']) {
 }
 
 // 8. Connexion Google.
-const auth = require(path.join(ROOT, 'api/auth.js'));
 const b64 = obj => Buffer.from(JSON.stringify(obj)).toString('base64url');
 function googleToken(claims, key = googlePrivate) {
   const head = b64({ alg: 'RS256', kid: 'test-key', typ: 'JWT' });
@@ -192,4 +170,27 @@ for (const credential of badTokens) {
   assert.equal((await call(auth, { method: 'POST', body: { credential } })).status, 401);
 }
 
-console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);
+// 9. Historique : les tirages en ligne y sont déjà ; un appareil peut y verser les siens, sans doublon.
+const aliceTab = { playerId: alice.playerId, secret: aliceSession };
+r = await call(history, { method: 'POST', body: aliceTab });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+const before = r.body.rolls;
+assert.equal(before.length, 4, 'chacun des 4 tirages en ligne d\'Alice est dans son historique');
+assert.ok(before.some(([n, t]) => n === aliceFirst.n && t === aliceFirst.t));
+
+const t0 = Date.UTC(2026, 8, 20, 12);
+const upload = [[42, t0], [42, t0], [1337, t0 + 1], [-5, t0], [7, 123], ['x', t0], [8, Date.now() + 3 * 86400000]];
+r = await call(history, { method: 'POST', body: { ...aliceTab, add: upload } });
+assert.equal(r.body.stored, 2, 'doublons et entrées invalides ignorés');
+assert.equal(r.body.rolls.length, before.length + 2);
+assert.ok(r.body.rolls.every((x, i, all) => i === 0 || all[i - 1][1] <= x[1]), 'du plus ancien au plus récent');
+
+r = await call(history, { method: 'POST', body: { ...aliceTab, add: [[42, t0]], fetch: false } });
+assert.equal(r.body.stored, 0, 'renvoyer un tirage déjà connu ne crée pas de doublon');
+assert.equal(r.body.rolls, undefined);
+
+assert.equal((await call(history, { method: 'POST', body: { ...aliceTab, secret: '9'.repeat(32) } })).status, 403);
+assert.equal((await call(history, { method: 'POST', body: { playerId: 'nope', secret: 'x' } })).status, 400);
+assert.equal((await call(history, { method: 'GET' })).status, 405);
+
+console.log(`OK — ${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} EP) et ${bobFirst.n} (${bobFirst.s} EP)`);

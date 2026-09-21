@@ -55,6 +55,12 @@ Test the leaderboard functions against an in-memory Redis:
 node tools/test-api.mjs
 ```
 
+Run the site together with the API and an in-memory database (no account needed) on http://localhost:8124:
+
+```bash
+node tools/dev.mjs
+```
+
 ## Online leaderboard
 
 Hosted on Vercel, deployed on every push to `main`.
@@ -62,6 +68,7 @@ Hosted on Vercel, deployed on every push to `main`.
 - `POST /api/roll`: the **server draws the number**, so nobody can pick their own 1337. It scores the roll with the same engine as the site and keeps each player's best roll for the day, the week and all time.
 - `GET /api/leaderboard?period=day|week|all`: top 50, plus the caller's own rank and the number of rolls today.
 - `POST /api/auth`: **Sign in with Google** (Google Identity Services). The server checks the ID token against Google's public keys, links the Google account to a player and gives each device its own secret, so the same account gets the same player on every device. Only the Google account ID is stored, never the email ([privacy policy](https://rng-infinite.vercel.app/privacy.html)).
+- `POST /api/history`: the player's full roll history, so history, stats and badges follow a Google account on every device. Online rolls are added by `/api/roll`; on sign-in each device uploads the rolls only it had, and downloads the rest. Signing out only clears the device once every roll is confirmed on the account.
 - Storage: Upstash Redis (Vercel Marketplace, free plan), one sorted set per period.
 - Since rolls are unlimited, players are ranked by their **best single roll**, not by total EP.
 - Each browser gets a random player id and a secret; only the holder of the secret can roll under that id. An 8 s cooldown matches the length of a reveal.

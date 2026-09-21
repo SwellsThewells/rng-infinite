@@ -50,6 +50,11 @@
     leaderboard(period) {
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
     },
+    // Sans "add" : renvoie tout l'historique du compte. Avec "add" : y verse ces tirages.
+    history(add, fetchAll = true) {
+      const p = Store.player;
+      return this.request('/api/history', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, add, fetch: fetchAll }) });
+    },
   };
 
   const app = document.getElementById('app');
@@ -685,7 +690,8 @@
       Store.setIdentity({ id: data.playerId, secret: data.secret, google: { email: data.email } });
       if (data.name) Store.setPlayerName(data.name);
       closeModal();
-      toast(`Signed in as ${data.email || 'your Google account'}`);
+      const restored = await syncHistory().catch(() => 0);
+      toast(`Signed in as ${data.email || 'your Google account'}${restored ? ` · ${plural(restored, 'roll')} restored` : ''}`);
       const next = afterGoogle;
       afterGoogle = null;
       if (!Store.player.name) askName(next || (() => {}), (data.givenName || '').slice(0, 20));
@@ -696,11 +702,49 @@
     }
   }
 
-  function signOutGoogle() {
+  // Synchronise l'historique avec le compte Google, dans les deux sens : récupère les tirages faits sur d'autres
+  // appareils, puis envoie ceux que seul cet appareil connaît. Les stats, badges et l'EP total en découlent.
+  let syncing = null;
+  function syncHistory() {
+    if (!Store.player.google) return Promise.resolve(0);
+    if (!syncing) {
+      syncing = (async () => {
+        try {
+          const server = await Online.history();
+          const onServer = new Set(server.rolls.map(([n, t]) => t + ':' + n));
+          const localOnly = Store.rolls.filter(r => !onServer.has(r[2] + ':' + r[0])).map(r => [r[0], r[2]]);
+          const added = Store.mergeRolls(server.rolls, n => Engine.scoreOf(n));
+          for (let i = 0; i < localOnly.length; i += 2000) await Online.history(localOnly.slice(i, i + 2000), false);
+          if (added) {
+            Collection.built = false;
+            if (currentView !== 'result' && !$('#modal-root').firstChild) route();
+          }
+          return added;
+        } finally {
+          syncing = null;
+        }
+      })();
+    }
+    return syncing;
+  }
+
+  // Déconnexion : l'historique n'est retiré de cet appareil qu'une fois chaque tirage confirmé sur le compte.
+  async function signOutGoogle() {
     if (window.google && google.accounts) google.accounts.id.disableAutoSelect();
-    Store.signOut();
     closeModal();
-    toast('Signed out: new anonymous player on this device');
+    try {
+      await syncHistory();
+      const server = await Online.history();
+      const onServer = new Set(server.rolls.map(([n, t]) => t + ':' + n));
+      if (!Store.rolls.every(r => onServer.has(r[2] + ':' + r[0]))) throw new Error('not synced');
+    } catch (err) {
+      toast('Could not save your history to your account, try signing out again');
+      return;
+    }
+    Store.clearRolls();
+    Collection.built = false;
+    Store.signOut();
+    toast('Signed out: your history is saved in your Google account');
     route();
   }
 
@@ -710,10 +754,10 @@
     return g
       ? `<div class="field"><label>Account</label>
           <div class="google-row"><span>Signed in with Google as <b>${esc(g.email || 'your account')}</b></span><button class="btn" id="google-out">Sign out</button></div>
-          <span class="panel-note">Your player and leaderboard spots follow you on every device.</span></div>`
+          <span class="panel-note">Your player, leaderboard spots and whole roll history (stats, badges) follow you on every device.</span></div>`
       : `<div class="field"><label>Account</label>
           <div id="google-btn" class="google-btn"></div>
-          <span class="panel-note">Sign in to keep the same player (and your leaderboard spots) on every device. Your roll history stays on each device.</span></div>`;
+          <span class="panel-note">Sign in to keep the same player, your leaderboard spots and your whole roll history (stats, badges) on every device.</span></div>`;
   }
 
   // Détail d'un nombre tiré par quelqu'un d'autre (classement, meilleur tirage du jour).
@@ -797,7 +841,7 @@
     const isFirst = Store.rolls.length === 0;
     const lifetimeBefore = lifetimeEP();
     // Le tirage est enregistré avant l'animation : quitter la page ne permet pas de relancer.
-    const { saved } = Store.addRoll(n, a.total);
+    const { saved } = Store.addRoll(n, a.total, online ? online.t : Date.now());
     const index = Store.rolls.length - 1;
     Collection.add(Store.rolls[index], index);
     if (!saved) toast('Could not save — storage is full. Export your history from the player menu.');
@@ -1411,7 +1455,7 @@
         <div class="rarity-table">${badgeRows.map(([t, l]) => `${tierPill(t)}<span>${l}</span>`).join('')}</div>
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
-        <p>Your full history stays in this browser. Use the player menu to export it (JSON) or move it to another device.</p>
+        <p>Sign in with Google to keep your history, stats and badges on every device. Otherwise they stay in this browser, and you can export them (JSON) from the player menu.</p>
         <p class="muted">Inspired by the daily game rngdle.com — this version removes the daily limit and adds history and stats.</p>
         <p class="muted"><a href="privacy.html">Privacy policy</a></p>
         <p><a class="btn" href="#/">Go roll</a></p>
@@ -1492,4 +1536,5 @@
   applyTheme();
   syncPlayer();
   route();
+  syncHistory().catch(() => {});
 })();

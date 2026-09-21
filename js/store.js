@@ -69,8 +69,9 @@
     get player() { return this.state.player; },
     get settings() { return this.state.settings; },
 
-    addRoll(n, ep) {
-      const roll = [n, ep, Date.now()];
+    // t = heure du serveur pour un tirage en ligne : c'est la même clé que dans l'historique du compte.
+    addRoll(n, ep, t = Date.now()) {
+      const roll = [n, ep, t];
       this.state.rolls.push(roll);
       const ok = this.save();
       this.emit();
@@ -108,6 +109,24 @@
       this.state.player = { id: uid(), secret: uid() + uid(), name: '' };
       this.save();
       this.emit();
+    },
+
+    // Ajoute les tirages du compte ([nombre, timestamp]) que cet appareil n'a pas encore ; renvoie le nombre ajouté.
+    mergeRolls(entries, scoreOf) {
+      const seen = new Set(this.state.rolls.map(r => r[2] + ':' + r[0]));
+      let added = 0;
+      for (const [n, t] of entries) {
+        if (seen.has(t + ':' + n)) continue;
+        seen.add(t + ':' + n);
+        this.state.rolls.push([n, scoreOf(n), t]);
+        added++;
+      }
+      if (added) {
+        this.state.rolls.sort((a, b) => a[2] - b[2]);
+        this.save();
+        this.emit();
+      }
+      return added;
     },
 
     // Recalcule l'EP stocké de chaque tirage quand la version des scores change.
