@@ -61,6 +61,7 @@ Hosted on Vercel, deployed on every push to `main`.
 
 - `POST /api/roll`: the **server draws the number**, so nobody can pick their own 1337. It scores the roll with the same engine as the site and keeps each player's best roll for the day, the week and all time.
 - `GET /api/leaderboard?period=day|week|all`: top 50, plus the caller's own rank and the number of rolls today.
+- `POST /api/auth`: **Sign in with Google** (Google Identity Services). The server checks the ID token against Google's public keys, links the Google account to a player and gives each device its own secret, so the same account gets the same player on every device. Only the Google account ID is stored, never the email ([privacy policy](https://rng-infinite.vercel.app/privacy.html)).
 - Storage: Upstash Redis (Vercel Marketplace, free plan), one sorted set per period.
 - Since rolls are unlimited, players are ranked by their **best single roll**, not by total EP.
 - Each browser gets a random player id and a secret; only the holder of the secret can roll under that id. An 8 s cooldown matches the length of a reveal.
