@@ -4,7 +4,7 @@ A random number game with **no daily limit**, inspired by [rngdle.com](https://w
 Each roll gives a number between 0 and 1,000,000, scored by the original game's 233 badges (palindromes, primes, sequences, meme numbers…) that award EP,
 plus custom badges defined in `tools/source/custom.json` — currently **Drastix** 💥: the number contains "235", 25,000 EP.
 
-**[Play →](https://sacha9214.github.io/rng-infinite/)**
+**[Play →](https://rng-infinite.vercel.app/)** (with the online leaderboard) · [GitHub Pages mirror](https://sacha9214.github.io/rng-infinite/)
 
 ![Roll screen](docs/apercu.png)
 
@@ -49,10 +49,22 @@ Before each commit, version the CSS/JS files to bust the GitHub Pages cache:
 node tools/stamp.mjs
 ```
 
-## Leaderboard (coming soon)
+Test the leaderboard functions against an in-memory Redis:
 
-Since rolls are unlimited, the leaderboard will rank the **best single roll** (day / week / all-time) rather than total EP.
-`player.id` and `player.name` are already stored locally for this.
+```bash
+node tools/test-api.mjs
+```
+
+## Online leaderboard
+
+Hosted on Vercel, deployed on every push to `main`.
+
+- `POST /api/roll`: the **server draws the number**, so nobody can pick their own 1337. It scores the roll with the same engine as the site and keeps each player's best roll for the day, the week and all time.
+- `GET /api/leaderboard?period=day|week|all`: top 50, plus the caller's own rank and the number of rolls today.
+- Storage: Upstash Redis (Vercel Marketplace, free plan), one sorted set per period.
+- Since rolls are unlimited, players are ranked by their **best single roll**, not by total EP.
+- Each browser gets a random player id and a secret; only the holder of the secret can roll under that id. An 8 s cooldown matches the length of a reveal.
+- Days reset at midnight UTC, like the original. If the server can't be reached, the roll still happens locally but doesn't count.
 
 ## License
 
