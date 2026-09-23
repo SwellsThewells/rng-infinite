@@ -37,6 +37,7 @@ export function fakeRedis() {
       for (let i = 0; i < pairs.length; i += 2) { if (!hash(k).has(pairs[i])) added++; hash(k).set(pairs[i], pairs[i + 1]); }
       return added;
     },
+    HSETNX(k, f, v) { if (hash(k).has(f)) return 0; hash(k).set(f, v); return 1; },
     HGET: (k, f) => (db.has(k) && db.get(k).has(f) ? db.get(k).get(f) : null),
     HMGET: (k, ...fields) => fields.map(f => COMMANDS.HGET(k, f)),
     HGETALL: k => (db.has(k) ? [...db.get(k).entries()].flat() : []),

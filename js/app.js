@@ -43,20 +43,16 @@
         clearTimeout(timer);
       }
     },
-    // duel : id du duel dans lequel compte ce tirage (facultatif).
-    roll(duel) {
+    roll() {
       const p = Store.player;
-      return this.request('/api/roll', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name, duel: duel || undefined }) });
+      return this.request('/api/roll', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name }) });
     },
-    duel(id) {
-      return this.request(`/api/duel?id=${encodeURIComponent(id)}&me=${Store.player.id}`);
+    room(code) {
+      return this.request(`/api/room?code=${encodeURIComponent(code)}&me=${Store.player.id}`);
     },
-    duels() {
-      return this.request(`/api/duel?me=${Store.player.id}`);
-    },
-    createDuel(opponent) {
+    roomAction(action, code) {
       const p = Store.player;
-      return this.request('/api/duel', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, opponent }) });
+      return this.request('/api/room', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name, action, code }) });
     },
     leaderboard(period) {
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
@@ -114,13 +110,6 @@
     if (s < 172800) return 'yesterday';
     if (s < 7 * 86400) return Math.floor(s / 86400) + 'd ago';
     return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-  }
-  function relFuture(t) {
-    const s = (t - Date.now()) / 1000;
-    if (s <= 0) return 'now';
-    if (s < 3600) return `in ${Math.max(1, Math.round(s / 60))} min`;
-    if (s < 86400) return `in ${Math.round(s / 3600)} h`;
-    return `in ${plural(Math.round(s / 86400), 'day')}`;
   }
   const fullDate = t => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -640,7 +629,16 @@
             press <kbd>Space</kbd>
           </p>
           <div id="today-slot"></div>
-          <div id="duels-slot"></div>
+          <div class="duel-entry">
+            <div class="eyebrow">⚔️ Live duel with a friend</div>
+            <div class="duel-entry-row">
+              <button class="btn" id="room-create">Create a duel</button>
+              <form class="duel-join" id="room-join-form">
+                <input class="input mono" id="room-code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Duel code">
+                <button class="btn" type="submit">Join</button>
+              </form>
+            </div>
+          </div>
           ${best >= 0 ? featureCardHTML(best) : ''}
           ${recent.length > 1 ? `
             <div class="recent-strip">
@@ -654,7 +652,8 @@
     const pick = $('#pick-name');
     if (pick) pick.addEventListener('click', openSettings);
     loadTodayCard($('#today-slot'));
-    loadDuelsSlot($('#duels-slot'));
+    $('#room-create').addEventListener('click', createRoom);
+    $('#room-join-form').addEventListener('submit', e => { e.preventDefault(); joinRoom($('#room-code').value); });
   }
 
   function featureCardHTML(i) {
@@ -890,22 +889,17 @@
   // on tire en local : le tirage reste dans l'historique mais pas au classement.
   // Rien ne se saute : pendant la révélation, Espace est ignoré ; une fois la rareté affichée, il relance.
   let rollPending = false;
-  // Duel lancé depuis sa page : "Roll again" et Espace continuent le duel ; son dernier tirage fait, ils ramènent au duel.
-  let activeDuel = null; // { id, opponent, rolled, size }
   async function startRoll(force) {
     if (rollPending) return;
     if (session && !session.finished && force !== true && !session.canReroll) return;
     if (!Store.player.name) { askName(() => startRoll(force)); return; }
-    if (activeDuel && activeDuel.rolled >= activeDuel.size) { openDuel(activeDuel.id); return; }
-    const duel = activeDuel;
     rollPending = true;
     const buttons = Array.from(document.querySelectorAll('#roll-btn, #r-again'));
     buttons.forEach(b => { b.disabled = true; });
     let n, online = null;
     try {
-      online = await Online.roll(duel && duel.id);
+      online = await Online.roll();
       n = online.n;
-      if (duel && online.duel) duel.rolled = online.duel.rolled;
     } catch (err) {
       if (err.status === 409) {
         rollPending = false;
@@ -922,14 +916,6 @@
         buttons.forEach(b => { b.disabled = false; });
         toast(err.status === 429 ? 'Wait for the reveal to finish'
           : wasGoogle ? 'Session expired: sign in with Google again to get your player back' : 'Player id reset, roll again');
-        return;
-      }
-      // Un tirage de duel doit passer par le serveur : pas de tirage local de secours.
-      if (duel) {
-        rollPending = false;
-        buttons.forEach(b => { b.disabled = false; });
-        toast(err.status === 422 ? err.message : 'Duel unavailable right now, try again');
-        if (err.status === 422) openDuel(duel.id);
         return;
       }
       n = Engine.roll();
@@ -949,7 +935,7 @@
     const index = Store.rolls.length - 1;
     Collection.add(Store.rolls[index], index);
     if (!saved) toast('Could not save — storage is full. Export your history from the player menu.');
-    session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index, online, duel: duel && { ...duel } });
+    session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index, online });
   }
 
   function notesHTML(ctx, a) {
@@ -980,15 +966,11 @@
     const padded = a.str.padStart(slotCount, '0');
     const lead = slotCount - a.str.length;
     const ascending = a.groups.slice().reverse();
-    const duel = ctx.duel;
-    const duelLeft = duel ? duel.size - duel.rolled : 0;
-    const againLabel = !duel ? 'Roll again' : duelLeft ? `Next duel roll (${duelLeft} left)` : 'See the duel';
 
     app.innerHTML = `
       <div class="vignette" id="r-vignette"></div>
       <div class="page">
         <section class="result" data-tier="${a.tier}">
-          ${duel ? `<div class="duel-banner">⚔️ Duel vs <b>${esc(duel.opponent)}</b> · roll ${duel.rolled}/${duel.size}</div>` : ''}
           <div class="num-card lg neutral charging" id="num-card">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
           </div>
@@ -1000,7 +982,7 @@
           </div>
           <div class="result-actions invisible" id="r-actions">
             <button class="btn" id="r-share">${shareIcon()} Share</button>
-            <button class="btn-roll small" id="r-again">${againLabel}</button>
+            <button class="btn-roll small" id="r-again">Roll again</button>
           </div>
           <p class="hint invisible" id="r-hint"></p>
           <div id="r-notes" style="text-align:center"></div>
@@ -1073,7 +1055,7 @@
       countUp(ep, 0, a.total, 0, v => `${fmt(v)} XP`);
       FX.celebrate(a.tier, card);
       show($('#r-actions'), 'fade-in');
-      $('#r-hint').innerHTML = `<kbd>Space</kbd> ${!duel ? 'to roll again' : duelLeft ? 'for the next duel roll' : 'to see the duel'} · click a badge name for details`;
+      $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
       show($('#r-hint'), 'fade-in');
       document.body.classList.remove('locked');
       canReroll = true;
@@ -1528,7 +1510,6 @@
     $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''}`;
     $('#p-body').innerHTML = `
       <p class="panel-note profile-sub">${p.rolls ? `Playing since ${day(p.since)} · last roll ${relTime(p.last)}` : 'No rolls yet'}</p>
-      ${me ? '' : `<div class="profile-actions"><button class="btn-roll small" id="p-duel">⚔️ Challenge to a duel</button></div>`}
       <div class="tiles">
         ${tile('Rolls', fmt(p.rolls), p.rolls ? `${fmt(p.lifetime / p.rolls)} XP per roll` : '–')}
         ${tile('Lifetime XP', compact(p.lifetime), `${fmt(p.lifetime)} XP`)}
@@ -1556,7 +1537,6 @@
         ${collectionHTML(found, collectionState)}
       </div>`;
     mountCollection(profileCollection(p.badges), collectionState);
-    if (!me) $('#p-duel').addEventListener('click', () => challenge(p.name));
   }
 
   // Comparaison complète avec un autre joueur (deux profils calculés par le serveur) :
@@ -1629,149 +1609,311 @@
       </div>`;
   }
 
-  // ---------------------------------------------------------------- duels
-  // 5 tirages chacun, le plus gros total d'XP gagne. Ce sont des tirages normaux : historique, XP et classement.
-  const duelHref = id => `#/duel/${id}`;
-  let duelTimer = 0, duelToken = 0, duelShown = null;
+  // ---------------------------------------------------------------- duel en direct
+  // Un joueur crée une salle et donne le code ; les deux tirent en même temps, manche par manche. Le serveur tire les
+  // deux nombres au même instant et fixe l'heure de la révélation commune (horloges recalées sur celle du serveur).
+  // Premier à 3 manches (5 au plus). Ce sont des tirages normaux : historique, XP et classement.
+  const roomHref = code => `#/room/${code}`;
+  const ROOM_POLL_MS = 1500;
+  const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null };
 
-  function openDuel(id) {
-    if (location.hash === duelHref(id)) route(); else location.hash = duelHref(id);
+  function roomError(err, retry) {
+    if (err.status === 409) { askName(retry, '', `"${Store.player.name}" is already taken by another player. Pick a new name.`); return; }
+    toast(err.status === 404 ? 'No duel with this code' : err.status === 422 ? err.message : 'Duel unavailable right now, try again');
   }
 
-  async function challenge(name) {
-    if (!Store.player.name) { askName(() => challenge(name)); return; }
+  async function createRoom() {
+    if (!Store.player.name) { askName(createRoom); return; }
     try {
-      const r = await Online.createDuel(name);
-      if (r.existing) toast(`You already have a duel running with ${name}`);
-      openDuel(r.id);
+      const d = await Online.roomAction('create');
+      location.hash = roomHref(d.code);
     } catch (err) {
-      toast(err.status === 404 ? `${name} can't be challenged` : 'Could not create the duel, try again');
+      roomError(err, createRoom);
     }
   }
 
-  function duelStatusHTML(d) {
-    const me = d.players.find(p => p.me);
-    if (d.status !== 'active') {
-      if (d.winner === null) return d.status === 'done' ? `🤝 Draw: ${fmt(d.players[0].total)} XP each` : '⌛ Expired: nobody finished in time';
-      const w = d.players[d.winner], l = d.players[1 - d.winner];
-      const who = w.me ? 'You win' : `${esc(w.name)} wins`;
-      return d.forfeit ? `🏆 ${who} by forfeit` : `🏆 ${who} by ${fmt(w.total - l.total)} XP`;
+  async function joinRoom(raw) {
+    const code = String(raw || '').trim().toUpperCase();
+    if (!/^[A-Z2-9]{5}$/.test(code)) { toast('Enter the 5-character duel code'); return; }
+    if (!Store.player.name) { askName(() => joinRoom(code)); return; }
+    try {
+      await Online.roomAction('join', code);
+      if (location.hash === roomHref(code)) route(); else location.hash = roomHref(code);
+    } catch (err) {
+      roomError(err, () => joinRoom(code));
     }
-    if (me && !me.done) return `Your turn: ${plural(d.size - me.rolls.length, 'roll')} left`;
-    const waiting = d.players.find(p => !p.done);
-    return `Waiting for ${esc(waiting.name)} (${waiting.rolls.length}/${d.size})`;
   }
 
-  function renderDuel(id) {
-    currentView = 'duel';
-    duelShown = id;
+  async function roomReady() {
+    const btn = $('#room-roll');
+    if (!btn || btn.disabled) return;
+    btn.disabled = true;
+    const token = Room.token, sent = Date.now();
+    try {
+      applyRoom(await Online.roomAction('ready', Room.code), token, sent, Date.now());
+    } catch (err) {
+      btn.disabled = false;
+      roomError(err, roomReady);
+    }
+  }
+
+  async function roomRematch() {
+    const d = Room.data;
+    if (d.next) { location.hash = roomHref(d.next); return; }
+    try {
+      const next = await Online.roomAction('rematch', d.code);
+      location.hash = roomHref(next.code);
+    } catch (err) {
+      roomError(err, roomRematch);
+    }
+  }
+
+  function stopRoom() {
+    clearTimeout(Room.timer);
+    if (Room.anim) Room.anim.cancel();
+    Room.anim = null;
+    Room.token++;
+  }
+
+  function renderRoom(code) {
+    currentView = 'room';
+    stopRoom();
+    Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null });
     app.innerHTML = `
       <div class="page page-wide">
         <a class="back-link" href="#/">← Home</a>
-        <h1 class="page-title">Duel</h1>
-        <div id="duel-body"><div class="empty">Loading…</div></div>
+        <h1 class="page-title">Live duel <span class="muted mono">${esc(Room.code)}</span></h1>
+        <div id="room-body"><div class="empty">Loading…</div></div>
       </div>`;
-    drawDuel(id, ++duelToken);
+    pollRoom(Room.token);
   }
 
-  async function drawDuel(id, token) {
-    clearTimeout(duelTimer);
-    let d;
+  // Sondé toutes les 1,5 s tant que le duel n'est pas fini et que l'onglet est visible.
+  async function pollRoom(token) {
+    clearTimeout(Room.timer);
+    const sent = Date.now();
     try {
-      d = await Online.duel(id);
+      applyRoom(await Online.room(Room.code), token, sent, Date.now());
     } catch (err) {
-      if (token === duelToken && currentView === 'duel') {
-        $('#duel-body').innerHTML = `<div class="empty">${err.status === 404 ? 'This duel does not exist or has expired.' : 'Duel unavailable right now.'}</div>`;
+      if (token !== Room.token || currentView !== 'room') return;
+      if (err.status === 404) {
+        $('#room-body').innerHTML = '<div class="empty">No duel with this code. Duels are kept for one day.</div>';
+        return;
       }
+    }
+    if (token !== Room.token || currentView !== 'room' || document.hidden) return;
+    // Duel fini : sondé plus lentement, seulement pour voir arriver la revanche de l'adversaire.
+    const d = Room.data;
+    if (!d || d.status !== 'done') Room.timer = setTimeout(() => pollRoom(token), ROOM_POLL_MS);
+    else if (!d.next && d.players.some(p => p && p.me)) Room.timer = setTimeout(() => pollRoom(token), 3000);
+  }
+
+  function applyRoom(d, token, sent, got) {
+    if (token !== Room.token || currentView !== 'room') return;
+    // Décalage avec l'horloge du serveur, pris sur l'échange le plus rapide (comme NTP).
+    if (got - sent <= Room.rtt) {
+      Room.rtt = got - sent;
+      Room.offset = d.now - (sent + got) / 2;
+    }
+    if (!Room.data) {
+      // Arrivée en cours de duel : les manches déjà finies s'affichent sans animation.
+      Room.shown = d.rounds.filter(r => r.revealAt - Room.offset + roundLength() < Date.now()).length;
+    }
+    Room.data = d;
+    drawRoom();
+    if (!Room.anim && Room.shown < d.rounds.length) playRound(Room.shown);
+  }
+
+  // Durée d'une révélation : les chiffres au rythme d'origine, puis l'XP et le gagnant de la manche.
+  const roundLength = () => REVEAL.digitStart + Array.from({ length: 5 }, (_, i) => digitDelay(i, 6)).reduce((x, y) => x + y, 0) + 1500;
+
+  // Score affiché : seulement les manches déjà révélées à l'écran.
+  function shownScore() {
+    const d = Room.data, wins = [0, 0], totals = [0, 0];
+    d.rounds.slice(0, Room.shown).forEach(r => {
+      totals[0] += r.a.s;
+      totals[1] += r.b.s;
+      if (r.winner !== null) wins[r.winner]++;
+    });
+    return { wins, totals };
+  }
+
+  // Ne remplace le contenu que s'il a changé : redessiner le bouton à chaque sondage pourrait avaler un clic.
+  function setHTML(el, html) {
+    if (el.dataset.html === html) return false;
+    el.innerHTML = html;
+    el.dataset.html = html;
+    return true;
+  }
+
+  function drawRoom() {
+    const d = Room.data, body = $('#room-body');
+    if (!body) return;
+    const [pa, pb] = d.players;
+
+    if (d.status === 'waiting') {
+      if (Room.view === 'waiting') return;
+      Room.view = 'waiting';
+      body.innerHTML = `
+        <div class="room-code-box">
+          <div class="eyebrow">Duel code</div>
+          <div class="room-code mono">${esc(d.code)}</div>
+          ${pa.me
+            ? `<p class="panel-note">Send this code to a friend: they type it on the home page, or open the link.</p>
+               <button class="btn" id="room-share">Share invite</button>`
+            : `<p class="panel-note"><b>${esc(pa.name)}</b> is waiting for an opponent.</p>
+               <button class="btn-roll small" id="room-join">⚔️ Join the duel</button>`}
+        </div>
+        ${pa.me ? '<p class="room-wait">Waiting for your opponent…</p>' : ''}`;
+      const shareBtn = $('#room-share');
+      if (shareBtn) shareBtn.addEventListener('click', () => shareOrCopy(`⚔️ Live duel on RNG∞, code ${d.code}\n${location.origin + location.pathname + roomHref(d.code)}`, 'Duel invite'));
+      const joinBtn = $('#room-join');
+      if (joinBtn) joinBtn.addEventListener('click', () => joinRoom(d.code));
       return;
     }
-    if (token !== duelToken || currentView !== 'duel') return;
-    const me = d.players.find(p => p.me);
-    const them = d.players.find(p => !p.me);
-    const canRoll = d.status === 'active' && me && !me.done;
-    const side = (p, i) => {
-      const won = d.winner === i;
-      const slots = Array.from({ length: d.size }, (_, k) => {
-        const r = p.rolls[k];
-        if (!r) return `<div class="record duel-empty"><span class="rank">${k + 1}</span><span class="muted">not rolled yet</span></div>`;
-        const a = analysis(r.n);
-        return `
-          <div class="record" data-number="${r.n}" data-caption="${esc(`${p.name} · duel roll ${k + 1}`)}">
-            <span class="rank">${k + 1}</span>
-            <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
-            <span class="grow">${a.groups.slice(0, 2).map(g => `${g.badge.emoji} ${esc(g.badge.label)}`).join(' · ')}</span>
-            <span class="ep-pill">${compact(r.s)} XP</span>
-          </div>`;
-      }).join('');
+
+    if (Room.view !== 'playing') {
+      Room.view = 'playing';
+      body.innerHTML = `
+        <p class="panel-note profile-sub">First to ${d.toWin} rounds (${d.maxRounds} max) · each round goes to the higher roll · duel rolls count on the leaderboard</p>
+        <div class="room-score" id="room-score"></div>
+        <div class="room-stage" id="room-stage"></div>
+        <div class="room-actions" id="room-actions"></div>
+        <div class="panel"><div class="panel-head"><h3 class="panel-title">Rounds</h3></div><div id="room-rounds"></div></div>`;
+      if (!Room.anim) $('#room-stage').innerHTML = stageHTML(Room.shown ? d.rounds[Room.shown - 1] : null);
+    }
+
+    const { wins, totals } = shownScore();
+    const player = (p, i) => `
+      <div class="room-player${i ? ' right' : ''}">
+        <a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>${p.me ? ' <span class="muted">(you)</span>' : ''}
+        <div class="panel-note">${fmt(totals[i])} XP${d.status === 'playing' && p.ready && !Room.anim ? ' · <span class="ready-chip">ready</span>' : ''}</div>
+      </div>`;
+    setHTML($('#room-score'), `${player(pa, 0)}<div class="room-wins mono">${wins[0]} – ${wins[1]}</div>${player(pb, 1)}`);
+
+    const me = d.players.find(p => p.me), opp = d.players.find(p => !p.me);
+    const finished = d.status === 'done' && Room.shown === d.rounds.length && !Room.anim;
+    let actions;
+    if (finished) {
+      const w = d.winner;
+      const how = w === null ? '' : ` ${wins[w]}–${wins[1 - w]}${wins[0] === wins[1] ? ' on total XP' : ''}`;
+      const banner = w === null ? '🤝 Draw' : d.players[w].me ? `🏆 You win${how}` : `🏆 ${esc(d.players[w].name)} wins${how}`;
+      const rematch = !me ? ''
+        : d.next ? `<button class="btn-roll small" id="room-rematch">🔁 ${d.players[d.nextBy] === me ? 'Back to the rematch' : `${esc(opp.name)} wants a rematch: play`}</button>`
+        : '<button class="btn-roll small" id="room-rematch">🔁 Rematch</button>';
+      actions = `<div class="room-result">${banner}</div>
+        <div class="room-buttons">${rematch}<a class="btn" href="#/">Home</a></div>`;
+    } else if (Room.anim) {
+      actions = `<p class="room-wait">Round ${Room.shown + 1}…</p>`;
+    } else if (!me) {
+      actions = '<p class="room-wait">Watching live</p>';
+    } else if (me.ready) {
+      actions = `<p class="room-wait">Waiting for ${esc(opp.name)} to roll…</p>`;
+    } else {
+      actions = `<button class="btn-roll" id="room-roll">🎲 Roll round ${d.rounds.length + 1}</button>
+        <p class="hint">${opp.ready ? `<b>${esc(opp.name)}</b> is ready · ` : ''}press <kbd>Space</kbd></p>`;
+    }
+    if (setHTML($('#room-actions'), actions)) {
+      const rollBtn = $('#room-roll');
+      if (rollBtn) rollBtn.addEventListener('click', roomReady);
+      const rematchBtn = $('#room-rematch');
+      if (rematchBtn) rematchBtn.addEventListener('click', () => roomRematch());
+    }
+
+    setHTML($('#room-rounds'), Room.shown ? d.rounds.slice(0, Room.shown).map((r, i) => {
+      const cell = (x, j) => {
+        const a = analysis(x.n);
+        return `<span class="num-card sm${r.winner === j ? ' round-won' : ''}" data-tier="${a.tier}" data-number="${x.n}" data-caption="${esc(`${d.players[j].name} · round ${i + 1}`)}" style="cursor:pointer">${a.str}</span>`;
+      };
+      const who = r.winner === null ? 'tie' : esc(d.players[r.winner].name);
+      return `<div class="room-round"><span class="rank">${i + 1}</span>${cell(r.a, 0)}<span class="muted">vs</span>${cell(r.b, 1)}<span class="room-round-winner">${r.winner === null ? '' : '🏆 '}${who}</span></div>`;
+    }).join('') : '<div class="empty">No round yet.</div>');
+  }
+
+  // Scène : les deux cartes côte à côte. Sans manche : "??????" ; sinon la manche révélée, avec son gagnant.
+  function stageHTML(r, spinning = false) {
+    const d = Room.data;
+    return d.players.map((p, j) => {
+      const x = r && (j ? r.b : r.a);
+      const a = x && !spinning ? analysis(x.n) : null;
+      const card = a
+        ? `<div class="num-card md" data-tier="${a.tier}" data-number="${x.n}" data-caption="${esc(p.name)}" style="cursor:pointer">${a.str}</div>`
+        : `<div class="num-card md neutral${spinning ? ' charging' : ''}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
       return `
-        <div class="panel duel-side${won ? ' won' : ''}">
-          <div class="panel-head"><a class="player-link" href="${profileHref(p.name)}">${won ? '🏆 ' : ''}${esc(p.name)}</a>${p.me ? '<span class="muted">(you)</span>' : ''}</div>
-          <div class="duel-total mono">${fmt(p.total)} XP</div>
-          <div class="panel-note">${p.rolls.length}/${d.size} rolls</div>
-          <div class="records">${slots}</div>
+        <div class="room-side${a && r.winner === j ? ' won' : ''}" id="rs-${j}">
+          <div class="room-name">${a && r.winner === j ? '🏆 ' : ''}${esc(p.name)}</div>
+          ${card}
+          <div class="room-meta" id="rm-${j}">${a ? `${tierPill(a.tier)}<span class="ep-pill">${fmt(a.total)} XP</span>` : ''}</div>
+          <div class="pill-row" id="rb-${j}">${a ? a.groups.slice(0, 3).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('') : ''}</div>
         </div>`;
-    };
-    const timing = d.status === 'active' ? `ends ${relFuture(d.endsAt)}` : `started ${relTime(d.created)}`;
-    $('#duel-body').innerHTML = `
-      <p class="panel-note profile-sub">${esc(d.players[0].name)} vs ${esc(d.players[1].name)} · ${d.size} rolls each, the highest total XP wins · ${timing}</p>
-      <div class="duel-status">${duelStatusHTML(d)}</div>
-      <div class="profile-actions">
-        ${canRoll ? `<button class="btn-roll small" id="duel-roll">⚔️ Duel roll (${d.size - me.rolls.length} left)</button>` : ''}
-        <button class="btn" id="duel-link">Share duel link</button>
-      </div>
-      <div class="grid-2">${d.players.map(side).join('')}</div>
-      <p class="panel-note" style="text-align:center">Duel rolls are normal rolls: they stay in your history and count on the leaderboard.</p>`;
-    if (canRoll) {
-      $('#duel-roll').addEventListener('click', () => {
-        activeDuel = { id: d.id, opponent: them.name, rolled: me.rolls.length, size: d.size };
-        startRoll(true);
+    }).join('<div class="room-vs">VS</div>');
+  }
+
+  // Révélation d'une manche, en même temps chez les deux joueurs : les chiffres des deux cartes tombent ensemble.
+  function playRound(i) {
+    const d = Room.data, r = d.rounds[i];
+    const stage = $('#room-stage');
+    if (!stage) return;
+    const sides = [r.a, r.b].map(x => ({ ...x, a: analysis(x.n) }));
+    const slotCount = Math.max(6, ...sides.map(x => x.a.str.length));
+    stage.innerHTML = stageHTML(r, true);
+    const cards = [0, 1].map(j => $(`#rc-${j}`));
+    cards.forEach(c => { c.innerHTML = Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join(''); });
+    const slots = cards.map(c => Array.from(c.querySelectorAll('.slot')));
+    const padded = sides.map(x => x.a.str.padStart(slotCount, '0'));
+
+    // Mon tirage entre dans l'historique tout de suite, comme un tirage normal (une seule fois, même après rechargement).
+    const mine = d.players.findIndex(p => p.me);
+    if (mine >= 0 && !Store.rolls.some(x => x[0] === sides[mine].n && x[2] === r.t)) {
+      Collection.ensure();
+      Store.addRoll(sides[mine].n, sides[mine].s, r.t);
+      Collection.add(Store.rolls[Store.rolls.length - 1], Store.rolls.length - 1);
+    }
+
+    let revealed = 0;
+    const timers = [];
+    const spin = setInterval(() => {
+      slots.forEach(list => { for (let k = revealed; k < slotCount; k++) list[k].textContent = String((Math.random() * 10) | 0); });
+    }, 55);
+    const at = (ms, fn) => timers.push(setTimeout(fn, Math.max(0, r.revealAt - Room.offset + ms - Date.now())));
+    let clock = REVEAL.digitStart;
+    for (let k = 0; k < slotCount; k++) {
+      if (k) clock += digitDelay(k - 1, slotCount);
+      at(clock, () => {
+        slots.forEach((list, j) => {
+          list[k].textContent = padded[j][k];
+          list[k].classList.remove('spinning');
+          list[k].classList.add('revealed');
+          if (k < slotCount - sides[j].a.str.length) list[k].classList.add('ghost');
+        });
+        revealed = k + 1;
       });
     }
-    $('#duel-link').addEventListener('click', () => {
-      const url = location.origin + location.pathname + duelHref(d.id);
-      shareOrCopy(`⚔️ ${d.players[0].name} vs ${d.players[1].name} on RNG∞: ${d.size} rolls each, highest XP wins\n${url}`, 'Duel link');
+    at(clock + 600, () => {
+      clearInterval(spin);
+      sides.forEach((x, j) => {
+        cards[j].classList.remove('neutral', 'charging');
+        cards[j].dataset.tier = x.a.tier;
+        $(`#rm-${j}`).innerHTML = `${tierPill(x.a.tier)}<span class="ep-pill">0 XP</span>`;
+        countUp($(`#rm-${j} .ep-pill`), 0, x.s, reducedMotion ? 0 : 700, v => `${fmt(v)} XP`);
+        $(`#rb-${j}`).innerHTML = x.a.groups.slice(0, 3).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('');
+        FX.celebrate(x.a.tier, cards[j]);
+      });
     });
-    // Rafraîchi toutes les 20 s tant que le duel tourne et que l'onglet est visible (quota de la base).
-    if (d.status === 'active' && !document.hidden) duelTimer = setTimeout(() => { if (currentView === 'duel') drawDuel(id, duelToken); }, 20000);
-  }
-
-  // Accueil : duels en cours (ton tour d'abord) et ceux terminés depuis moins de 3 jours.
-  async function loadDuelsSlot(slot) {
-    if (!Store.player.name) return;
-    let list;
-    try {
-      list = (await Online.duels()).duels;
-    } catch (err) {
-      return;
-    }
-    if (!slot.isConnected) return;
-    const recent = Date.now() - 3 * 86400000;
-    const rows = list.map(d => {
-      const me = d.players.find(p => p.me), them = d.players.find(p => !p.me);
-      if (!me || !them) return null;
-      const last = Math.max(d.created, ...d.players.flatMap(p => p.rolls.map(r => r.t)));
-      if (d.status !== 'active' && last < recent) return null;
-      const mine = d.players.indexOf(me);
-      let state, cls = '', order = 2;
-      if (d.status === 'active') {
-        if (!me.done) { state = `Your turn · ${me.rolls.length}/${d.size}`; cls = ' turn'; order = 0; } else { state = `Waiting for ${them.name}`; order = 1; }
-      } else if (d.winner === null) {
-        state = d.status === 'done' ? 'Draw' : 'Expired';
-      } else {
-        const won = d.winner === mine;
-        state = (won ? 'Won' : 'Lost') + (d.forfeit ? ' (forfeit)' : '');
-        cls = won ? ' won' : ' lost';
+    at(clock + 1500, () => {
+      if (r.winner !== null) {
+        const side = $(`#rs-${r.winner}`);
+        side.classList.add('won');
+        side.querySelector('.room-name').insertAdjacentText('afterbegin', '🏆 ');
       }
-      return { order, last, html: `
-        <a class="duel-row${cls}" href="${duelHref(d.id)}">
-          <span>⚔️ vs <b>${esc(them.name)}</b></span>
-          <span class="mono">${compact(me.total)} – ${compact(them.total)}</span>
-          <span class="duel-state">${esc(state)}</span>
-        </a>` };
-    }).filter(Boolean).sort((x, y) => x.order - y.order || y.last - x.last);
-    slot.innerHTML = rows.length ? `<div class="duel-list"><div class="eyebrow">Your duels</div>${rows.map(r => r.html).join('')}</div>` : '';
+      Room.anim = null;
+      Room.shown = i + 1;
+      drawRoom();
+      if (Room.shown < Room.data.rounds.length) playRound(Room.shown);
+    });
+    Room.anim = { cancel() { timers.forEach(clearTimeout); clearInterval(spin); } };
+    drawRoom();
   }
-
   // ---------------------------------------------------------------- leaderboard / à propos
   // Classement du meilleur tirage de chaque joueur (tirages illimités : l'XP total récompenserait juste le plus gros cliqueur).
   const lbState = { period: 'day' };
@@ -1862,7 +2004,7 @@
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
-        <p>Challenge a friend to a duel from their profile: 5 rolls each, the highest total XP wins. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
+        <p>Live duel: create a duel on the home page and send the code to a friend. You both roll at the same time and see both numbers revealed together; each round goes to the higher roll, first to 3 rounds wins. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
         <p class="muted">Based on the daily game <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>: this version removes the daily limit and adds history, stats, Google sign-in and a leaderboard between friends.</p>
         <p class="muted"><a href="privacy.html">Privacy policy</a></p>
@@ -1877,13 +2019,12 @@
     if (session && !session.finished) session.cancel();
     FX.clear();
     clearTimeout(lbTimer);
-    clearTimeout(duelTimer);
-    activeDuel = null;
+    stopRoom();
     closeModal();
     tip.hidden = true;
     const [key, ...rest] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
     if (key === 'player' && rest.length) renderProfile(decodeURIComponent(rest.join('/')));
-    else if (key === 'duel' && rest.length) renderDuel(rest[0]);
+    else if (key === 'room' && rest.length) renderRoom(rest[0]);
     else (ROUTES[key] || renderHome)();
     const navKey = key === 'player' ? 'leaderboard' : key;
     document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navKey));
@@ -1923,6 +2064,11 @@
   document.addEventListener('keydown', e => {
     const modalOpen = !!$('#modal-root').firstChild;
     if (e.key === 'Escape' && modalOpen) { closeModal(); return; }
+    if (!modalOpen && currentView === 'room' && (e.code === 'Space' || e.key === ' ') && e.target.tagName !== 'INPUT') {
+      e.preventDefault();
+      if (!e.repeat) roomReady();
+      return;
+    }
     if (modalOpen || (currentView !== 'home' && currentView !== 'result')) return;
     const tag = e.target.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || e.metaKey || e.ctrlKey || e.altKey) return;
@@ -1946,7 +2092,7 @@
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && currentView === 'leaderboard') drawLeaderboard();
-    if (!document.hidden && currentView === 'duel' && duelShown) drawDuel(duelShown, duelToken);
+    if (!document.hidden && currentView === 'room' && Room.code) pollRoom(Room.token);
   });
 
   window.addEventListener('hashchange', route);
