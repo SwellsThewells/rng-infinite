@@ -34,7 +34,7 @@ globalThis.fetch = async (url, opts) => {
 };
 
 // ---------------------------------------------------------------- appel d'une fonction comme le ferait Vercel
-function call(handler, { method = 'GET', url = '/', body } = {}) {
+function call(handler, { method = 'GET', url = '/', body, headers: reqHeaders = {} } = {}) {
   return new Promise(resolve => {
     const headers = {};
     const res = {
@@ -42,7 +42,7 @@ function call(handler, { method = 'GET', url = '/', body } = {}) {
       setHeader: (k, v) => { headers[k.toLowerCase()] = v; },
       end: data => resolve({ status: res.statusCode, headers, body: data ? JSON.parse(data) : null }),
     };
-    Promise.resolve(handler({ method, url, body }, res));
+    Promise.resolve(handler({ method, url, body, headers: reqHeaders }, res));
   });
 }
 
@@ -177,6 +177,9 @@ for (const credential of badTokens) {
 }
 
 // 9. Historique : les tirages en ligne y sont déjà ; un appareil peut y verser les siens, sans doublon.
+// Seulement un ancien joueur (stats pas encore reconstruites) : Alice joue ce rôle ici.
+assert.equal(run([['HGET', `stats:${alice.playerId}`, 'v']])[0].result, '1', 'joueuse créée par un tirage : stats marquées dès le départ');
+run([['HDEL', `stats:${alice.playerId}`, 'v']]);
 const aliceTab = { playerId: alice.playerId, secret: aliceSession };
 r = await call(history, { method: 'POST', body: aliceTab });
 assert.equal(r.status, 200, JSON.stringify(r.body));
@@ -309,6 +312,8 @@ assert.deepEqual(r.body.reacts.map(x => x.name), ['Alice'], 'les autres voient l
 assert.ok(r.body.players.every(p => 'title' in p));
 
 // Manche 1 : tant que tout le monde n'est pas prêt, rien ; le dernier prêt déclenche les 3 tirages ensemble.
+// (Ils viennent de tirer dans les tests précédents : on efface leur délai de 8 s.)
+[alice, bob, carol].forEach(p => db.delete(`cooldown:${p.playerId}`));
 const histA = (await call(history, { method: 'POST', body: aliceTab })).body.rolls.length;
 const countOf = async name => (await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === name).rolls;
 const countA = await countOf('Alice');
@@ -547,5 +552,47 @@ r = await later(11000, () => roomPost(gina, 'ready', { code: mixed }));
 assert.equal(r.body.rounds.length, 0, 'Dave n\'est pas prêt : on l\'attend (le bot ne compte pas)');
 r = await later(0, () => roomPost(dave, 'ready', { code: mixed }));
 assert.equal(r.body.rounds.length, 1);
+
+// 19. Anti-triche.
+// Compte neuf : il ne peut pas se créditer de faux tirages via son historique (pièces, succès, profil).
+const henry = { playerId: '7'.repeat(16), secret: 'b'.repeat(32), name: 'Henry' };
+db.delete(`cooldown:${henry.playerId}`);
+assert.equal((await call(roll, { method: 'POST', body: henry })).status, 200);
+const henryCoins = (await call(shopApi, { url: `/api/shop?me=${henry.playerId}` })).body.coins;
+const fake = Array.from({ length: 300 }, (_, i) => [777777, Date.UTC(2026, 0, 1) + i * 120000]);
+r = await call(history, { method: 'POST', body: { ...henry, add: fake } });
+assert.deepEqual([r.status, r.body.stored, r.body.rolls.length], [200, 0, 1], 'faux tirages refusés');
+assert.equal((await call(shopApi, { url: `/api/shop?me=${henry.playerId}` })).body.coins, henryCoins, 'pas de pièces en plus');
+r = await call(profile, { url: '/api/profile?name=Henry' });
+assert.deepEqual([r.body.rolls, r.body.achievements.includes('millionaire')], [1, false]);
+// Même chose pour un compte créé par une connexion Google sans historique.
+r = await signIn({ sub: 'g-new-player' }, { playerId: '6'.repeat(16), secret: 'c'.repeat(32) });
+assert.equal(run([['HGET', `stats:${r.body.playerId}`, 'v']])[0].result, '1');
+
+// Parties en parallèle : une manche attend le délai de 8 s du joueur (autre partie ou tirage normal).
+const ivy = { playerId: '5'.repeat(16), secret: 'd'.repeat(32), name: 'Ivy' };
+const roomA = (await roomPost(ivy, 'create', { size: 2, bots: 1 })).body.code;
+const roomB = (await roomPost(ivy, 'create', { size: 2, bots: 1 })).body.code;
+assert.equal((await roomPost(ivy, 'ready', { code: roomA })).body.rounds.length, 1);
+assert.equal((await roomPost(ivy, 'ready', { code: roomB })).body.rounds.length, 0, 'deuxième partie en même temps : on attend');
+assert.equal((await call(roll, { method: 'POST', body: ivy })).status, 429, 'tirage normal pendant ce temps : refusé');
+r = await later(8100, () => roomGet(roomB, ivy));
+assert.equal(r.body.rounds.length, 1, '8 s plus tard, la manche part');
+
+// Noms : alphabet latin, chiffres, espaces et _ . - ' ; pas de sosie en cyrillique.
+const { cleanName } = require(path.join(ROOT, 'api/_lib.js'));
+assert.equal(cleanName('  Sâcha_2.0  '), 'Sâcha_2.0');
+assert.notEqual(cleanName('Ѕасhа'), 'Sacha');
+assert.equal(cleanName('<b>Bob</b>🔥'), 'bBobb');
+
+// Limite par IP : au-delà de 300 requêtes par minute, 429 sans toucher à la base.
+const ipHeaders = { 'x-forwarded-for': '203.0.113.7' };
+let lastStatus = 0, before429 = calls;
+for (let i = 0; i < 301; i++) lastStatus = (await call(roomApi, { url: '/api/room?code=ZZZZZ', headers: ipHeaders })).status;
+assert.equal(lastStatus, 429);
+const afterLimit = calls;
+assert.equal((await call(roomApi, { url: '/api/room?code=ZZZZZ', headers: ipHeaders })).status, 429);
+assert.equal(calls, afterLimit, 'une requête bloquée ne coûte rien à la base');
+assert.equal((await call(roomApi, { url: '/api/room?code=ZZZZZ', headers: { 'x-forwarded-for': '198.51.100.1' } })).status, 404, 'une autre IP passe');
 
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

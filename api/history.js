@@ -2,7 +2,7 @@
 // Historique complet d'un joueur, pour le retrouver sur tous ses appareils (joueurs connectés avec Google).
 // Les tirages faits en ligne y sont ajoutés par /api/roll ; "add" y verse ceux que seul l'appareil connaissait
 // (hors ligne, ou d'avant la synchronisation). Réponse : tous les tirages, du plus ancien au plus récent.
-const { redis, ownsPlayer, historyKey, HISTORY_CAP, rollSet, cors, send } = require('./_lib');
+const { redis, ownsPlayer, historyKey, HISTORY_CAP, rollSet, statsKey, cors, send } = require('./_lib');
 
 const MAX_ADD = 5000; // par requête ; le site découpe au-delà
 const MIN_T = Date.UTC(2024, 0, 1);
@@ -22,6 +22,11 @@ module.exports = async (req, res) => {
     const valid = (Array.isArray(body.add) ? body.add.slice(0, MAX_ADD) : []).filter(r =>
       Array.isArray(r) && Number.isInteger(r[0]) && r[0] >= 0 && r[0] <= 1000000 &&
       Number.isInteger(r[1]) && r[1] >= MIN_T && r[1] <= maxT);
+
+    // Seuls les anciens joueurs (stats pas encore reconstruites) peuvent encore verser leurs tirages locaux, une fois.
+    // Ensuite l'historique ne contient que des tirages faits par le serveur : impossible d'y glisser un faux 1337.
+    const [verified] = await redis([['HGET', statsKey(playerId), 'v']]);
+    if (verified) valid.length = 0;
 
     let stored = 0;
     if (valid.length) {

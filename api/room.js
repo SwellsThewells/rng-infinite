@@ -125,6 +125,11 @@ async function advance(room, now = Date.now()) {
   if (ready < humans(room).length && now < first + AUTO_MS) return room;
   const last = room.rounds[k - 1];
   if (last && now < last.revealAt + GAP_MS) return room;
+  // Un joueur prêt qui a tiré ailleurs il y a moins de 8 s (autre partie, tirage normal) : on attend son délai.
+  // Sinon plusieurs parties en parallèle (contre des bots par exemple) multiplieraient ses tirages.
+  const readyHumans = humans(room).filter(p => readyFor(room, p) === k);
+  const ttls = await redis(readyHumans.map(p => ['PTTL', `cooldown:${p.id}`]));
+  if (ttls.some(ms => Number(ms) > 0)) return room;
   const [lock] = await redis([['SET', `${roomKey(room.code)}:draw:${k}`, '1', 'NX', 'EX', TTL]]);
   if (lock !== 'OK') return (await load(room.code)) || room;
   const round = { t: now, revealAt: now + LEAD_MS, n: room.players.map(() => crypto.randomInt(0, 1000001)) };

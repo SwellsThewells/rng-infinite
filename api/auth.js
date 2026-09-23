@@ -3,7 +3,7 @@
 // Le même compte Google retrouve donc son joueur (et ses places au classement) sur n'importe quel appareil.
 const crypto = require('node:crypto');
 const config = require('../js/config.js');
-const { redis, verifyGoogleToken, sha256, statsKey, OWNER_EMAIL_SHA256, cors, send } = require('./_lib');
+const { redis, verifyGoogleToken, sha256, statsKey, OWNER_EMAIL_SHA256, markFresh, cors, send } = require('./_lib');
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
@@ -44,6 +44,7 @@ module.exports = async (req, res) => {
         ['SET', `player:${candidate}:google`, google.sub, 'NX'],
       ]);
       playerId = winner;
+      await markFresh(playerId); // joueur neuf (sans historique) : pas de reconstruction à tromper
     }
 
     // Un secret par appareil connecté : tous restent valides pour ce joueur.

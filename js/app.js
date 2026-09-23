@@ -796,7 +796,9 @@
   // Réserve le nom sur le serveur (un nom = un seul joueur). Serveur injoignable : on le garde localement,
   // le serveur tranchera au prochain tirage.
   async function saveName(raw) {
-    const name = String(raw).trim().slice(0, 20);
+    const name = String(raw).trim().replace(/\s+/g, ' ').slice(0, 20);
+    // Même règle que le serveur : alphabet latin (accents compris), chiffres, espaces et _ . - ' (pas de sosie en cyrillique).
+    if (!/^[\p{Script=Latin}0-9 _.\-']+$/u.test(name)) return { ok: false, error: "Use letters, digits, spaces and _ . - ' only." };
     try {
       const data = await Online.claimName(name);
       Store.setPlayerName(data.name || name);
@@ -941,9 +943,11 @@
       await syncHistory();
       const server = await Online.history();
       const onServer = Store.rollSet(server.rolls);
-      if (!Store.rolls.every(r => onServer.has(r[0], r[2]))) throw new Error('not synced');
+      // Le serveur n'accepte plus les tirages faits hors ligne (anti-triche) : on prévient avant de les retirer d'ici.
+      const localOnly = Store.rolls.filter(r => !onServer.has(r[0], r[2])).length;
+      if (localOnly && !confirm(`${plural(localOnly, 'roll')} on this device could not be saved to your account (made offline). Sign out anyway and remove ${localOnly === 1 ? 'it' : 'them'} from this device?`)) return;
     } catch (err) {
-      toast('Could not save your history to your account, try signing out again');
+      toast('Could not reach your account, try signing out again');
       return;
     }
     Store.clearRolls();
