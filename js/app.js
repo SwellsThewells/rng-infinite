@@ -2308,9 +2308,16 @@
         ${me ? `<div class="room-reacts" id="room-reacts">${REACTIONS.map((e, i) => `<button class="react-btn" data-react="${e}" title="${EMOTE_LABELS[e]} (press ${i + 1})">${emoteHTML(e)}</button>`).join('')}</div>` : ''}
         <div class="room-actions"><div id="room-cta"></div><p class="hint" id="room-hint"></p></div>
         <div class="panel"><div class="panel-head"><h3 class="panel-title">Rounds</h3></div><div id="room-rounds"></div></div>`;
-      if (!Room.anim) $('#room-stage').innerHTML = stageHTML(Room.shown ? d.rounds[Room.shown - 1] : null);
+      if (!Room.anim) { $('#room-stage').innerHTML = stageHTML(Room.shown ? d.rounds[Room.shown - 1] : null); Room.skinSig = skinSig(d); }
       const reacts = $('#room-reacts');
       if (reacts) reacts.addEventListener('click', e => { const b = e.target.closest('[data-react]'); if (b) sendReaction(b.dataset.react); });
+    }
+    // Un joueur a changé de skin dans Shop : ses cartes changent entre deux manches, jamais pendant une révélation.
+    if (!Room.anim && $('#room-stage') && Room.skinSig !== skinSig(d)) {
+      const r = Room.shown ? d.rounds[Room.shown - 1] : null;
+      $('#room-stage').innerHTML = stageHTML(r);
+      if (r && r.winner !== null) d.players.forEach((p, j) => { if (j !== r.winner) $(`#rs-${j}`).classList.add('lost'); });
+      Room.skinSig = skinSig(d);
     }
 
     // Classement de la partie : manches gagnées (puis XP), ou barre de progression vers le palier d'XP.
@@ -2396,6 +2403,8 @@
     return pills.join('');
   }
 
+  const skinSig = d => d.players.map(p => p.skin || '').join('|');
+
   // Scène : une carte par joueur. Sans manche : "??????" ; sinon la manche révélée, avec son gagnant.
   function stageHTML(r, spinning = false) {
     const d = Room.data;
@@ -2424,6 +2433,7 @@
     const sides = r.n.map((n, j) => ({ n, s: r.s[j], a: analysis(n) }));
     const slotCount = Math.max(6, ...sides.map(x => x.a.str.length));
     stage.innerHTML = stageHTML(r, true);
+    Room.skinSig = skinSig(d);
     const cards = sides.map((x, j) => $(`#rc-${j}`));
     cards.forEach(c => { c.innerHTML = Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join(''); });
     const slots = cards.map(c => Array.from(c.querySelectorAll('.slot')));

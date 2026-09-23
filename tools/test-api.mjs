@@ -504,6 +504,11 @@ assert.deepEqual([r.body.owned.includes('slots'), r.body.owned.includes('donut')
 r = await roomPost(frank, 'create', { size: 2, public: false });
 assert.equal(r.body.players[0].skin, 'neon', 'le skin se voit en duel');
 const privateRoom = r.body.code;
+// Changer de skin dans Shop en pleine partie : la salle montre le nouveau, sans la quitter.
+await shop(frank, 'equip', 'classic');
+assert.equal((await roomGet(privateRoom)).body.players[0].skin, null, 'skin changé : vu dans la salle');
+await shop(frank, 'equip', 'neon');
+assert.equal((await roomGet(privateRoom)).body.players[0].skin, 'neon');
 assert.equal(r.body.public, false);
 
 // 16. « Live now » : les parties publiques actives, pas les privées ni les finies.

@@ -219,6 +219,10 @@ function duelWrites(room) {
 // État public, sans identifiant : `me` marque le joueur qui regarde. Partie finie : ses succès, pour annoncer les nouveaux.
 async function view(room, me) {
   const sc = score(room);
+  // Skin équipé en ce moment (changé dans Shop en pleine partie : pris en compte, le site l'affiche entre deux manches).
+  const people = room.players.filter(p => !p.bot);
+  const live = people.length ? await redis([['HMGET', 'skins', ...people.map(p => p.id)]]).then(([v]) => v) : [];
+  const skinNow = new Map(people.map((p, i) => [p.id, Shop.resolve(live[i]) || null]));
   const k = room.rounds.length;
   const status = sc.done ? 'done' : room.h.ended === '1' ? 'abandoned' : !room.started ? 'lobby' : 'playing';
   const readyCount = humans(room).filter(p => readyFor(room, p) === k).length;
@@ -227,7 +231,7 @@ async function view(room, me) {
   return {
     code: room.code, status, size: room.size, mode: room.mode, target: room.target, public: room.h.public === '1', bots: hasBots(room),
     players: room.players.map((p, i) => ({
-      name: p.name, title: p.title || null, skin: p.skin || null, bot: !!p.bot, me: p.id === me, host: p.id === room.host,
+      name: p.name, title: p.title || null, skin: (p.bot ? p.skin : skinNow.get(p.id)) || null, bot: !!p.bot, me: p.id === me, host: p.id === room.host,
       ready: status === 'playing' && !p.bot && readyFor(room, p) === k, wins: sc.wins[i], total: sc.totals[i],
     })),
     rounds: sc.list,
