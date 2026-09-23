@@ -198,16 +198,18 @@ const historyKey = playerId => `hist:${playerId}`;
 const HISTORY_CAP = 100000;
 const XP_LB = 'lb:xp';
 
-// XP à vie recalculé depuis l'historique (mêmes doublons écartés que rebuildStats), pour remplir lb:xp une fois.
-function lifetimeXp(members) {
+// XP à vie et nombre de tirages recalculés depuis l'historique (mêmes doublons écartés que rebuildStats),
+// pour remplir lb:xp et count:all une fois (tirages faits avant le classement en ligne compris).
+function lifetimeTotals(members) {
   const seen = rollSet();
-  let xp = 0;
+  let xp = 0, rolls = 0;
   for (const m of members || []) {
     const [t, n] = m.split(':').map(Number);
-    if (seen.add(n, t)) xp += engine.scoreOf(n);
+    if (seen.add(n, t)) { xp += engine.scoreOf(n); rolls++; }
   }
-  return xp;
+  return { xp, rolls };
 }
+const lifetimeXp = members => lifetimeTotals(members).xp;
 
 // Un même tirage peut porter l'heure du serveur ou, envoyé par une ancienne version du site, celle de l'appareil
 // (quelques dixièmes de seconde d'écart) : même nombre à moins d'une minute = même tirage. Même règle que js/store.js.
@@ -353,7 +355,7 @@ async function flushDue(now = Date.now()) {
 }
 
 module.exports = {
-  queueReveal, flushDue, PENDING_KEY, XP_LB, lifetimeXp,
+  queueReveal, flushDue, PENDING_KEY, XP_LB, lifetimeXp, lifetimeTotals,
   engine, redis, dayKey, weekKey, scopes, cleanName, sha256, cors, send, verifyGoogleToken,
   ownsPlayer, historyKey, HISTORY_CAP, claimPlayer, claimName, nameKey, rollSet, findPlayer, recordRoll,
   Achievements, statsKey, readStats, toObject, OWNER_EMAIL_SHA256, markFresh,

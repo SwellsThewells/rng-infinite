@@ -648,7 +648,12 @@ assert.equal((await roomGet(pair)).body.status, 'abandoned');
   const xpFromHistory = who => lifetimeXp(run([['ZRANGE', `hist:${who.playerId}`, 0, -1]])[0].result);
   // Comme en production : un classement vide et un joueur d'avant, jamais compté.
   db.delete('lb:xp'); db.delete('lb:xp:migrated');
+  run([['HSET', 'count:all', alice.playerId, 1]]); // tirages d'avant le classement en ligne : pas comptés
+  const { lifetimeTotals } = require(path.join(ROOT, 'api/_lib.js'));
+  const aliceTotals = lifetimeTotals(run([['ZRANGE', `hist:${alice.playerId}`, 0, -1]])[0].result);
   r = await call(leaderboard, { url: `/api/leaderboard?period=xp&me=${alice.playerId}` });
+  assert.equal(r.body.entries.find(e => e.name === 'Alice').rolls, aliceTotals.rolls, 'tirages à vie recomptés depuis l\'historique');
+  assert.equal((await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Alice').rolls, aliceTotals.rolls, 'aussi en All-time');
   assert.equal(r.status, 200, JSON.stringify(r.body));
   assert.equal(r.body.period, 'xp');
   const xpA = r.body.entries.find(e => e.name === 'Alice');
@@ -657,7 +662,7 @@ assert.equal((await roomGet(pair)).body.status, 'abandoned');
   const sorted = r.body.entries.map(e => e.s);
   assert.deepEqual(sorted, [...sorted].sort((x, y) => y - x), 'trié par XP à vie');
   assert.ok(r.body.entries.every(e => Number.isInteger(e.n) && e.s >= engine.scoreOf(e.n)), 'avec le meilleur tirage, jamais plus que le total');
-  assert.equal(run([['GET', 'lb:xp:migrated']])[0].result, '1', 'rempli une seule fois');
+  assert.equal(run([['GET', 'lb:xp:migrated']])[0].result, '2', 'rempli une seule fois');
   // Un nouveau tirage s'ajoute tout de suite.
   db.delete(`cooldown:${frank.playerId}`);
   const before = (await call(leaderboard, { url: '/api/leaderboard?period=xp' })).body.entries.find(e => e.name === 'Frank').s;
