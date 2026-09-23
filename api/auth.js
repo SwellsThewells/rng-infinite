@@ -3,7 +3,7 @@
 // Le même compte Google retrouve donc son joueur (et ses places au classement) sur n'importe quel appareil.
 const crypto = require('node:crypto');
 const config = require('../js/config.js');
-const { redis, verifyGoogleToken, sha256, cors, send } = require('./_lib');
+const { redis, verifyGoogleToken, sha256, statsKey, OWNER_EMAIL_SHA256, cors, send } = require('./_lib');
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
@@ -48,10 +48,14 @@ module.exports = async (req, res) => {
 
     // Un secret par appareil connecté : tous restent valides pour ce joueur.
     const secret = crypto.randomBytes(16).toString('hex');
-    const [, name] = await redis([
+    const writes = [
       ['SADD', `player:${playerId}:secrets`, sha256(secret)],
       ['HGET', 'names', playerId],
-    ]);
+    ];
+    // Le créateur du site (e-mail vérifié par Google) débloque le titre Owner ; l'e-mail n'est comparé qu'en mémoire.
+    const email = String(google.email || '').trim().toLowerCase();
+    if (google.email_verified && email && sha256(email) === OWNER_EMAIL_SHA256) writes.push(['HSET', statsKey(playerId), 'owner', 1]);
+    const [, name] = await redis(writes);
 
     return send(res, 200, {
       playerId,

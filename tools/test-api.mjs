@@ -14,6 +14,7 @@ const require = createRequire(import.meta.url);
 process.env.KV_REST_API_URL = 'https://fake-redis.test';
 process.env.KV_REST_API_TOKEN = 'test-token';
 process.env.GOOGLE_CLIENT_ID = 'test-client.apps.googleusercontent.com';
+process.env.OWNER_EMAIL_SHA256 = crypto.createHash('sha256').update('owner@example.com').digest('hex');
 
 // Fausse paire de clés "Google" : les jetons de test sont signés avec, et fetch sert la clé publique.
 const GOOGLE_CERTS_URL = 'https://www.googleapis.com/oauth2/v3/certs';
@@ -432,5 +433,21 @@ assert.equal(Number(st.rolls), r.body.rolls, 'tirages recomptés');
 assert.equal(rebuilt[1].result, new Set(aliceAll.flatMap(([n]) => engine.analyze(n).earnedIds)).size, 'badges différents recomptés');
 assert.equal(Number(st.duelWins || 0) >= 0, true);
 assert.ok(r.body.achievements.includes('rookie') && r.body.achievements.includes('regular') === (r.body.rolls >= 100));
+
+// 14. Titre Owner : seulement pour le compte Google du créateur (e-mail vérifié), invisible pour les autres.
+const owner = { playerId: '9'.repeat(16), secret: '7'.repeat(32), name: 'Boss' };
+db.delete(`cooldown:${owner.playerId}`);
+assert.equal((await call(roll, { method: 'POST', body: owner })).status, 200);
+assert.equal((await equip(owner, 'owner')).status, 422, 'pas encore Owner');
+r = await signIn({ sub: 'g-fake', email: 'owner@example.com', email_verified: false }, { playerId: 'a1'.repeat(8), secret: '8'.repeat(32) });
+assert.equal(r.status, 200);
+assert.equal(run([['HGET', `stats:${r.body.playerId}`, 'owner']])[0].result, null, 'e-mail non vérifié : pas Owner');
+r = await signIn({ sub: 'g-owner', email: ' Owner@Example.com ' }, { playerId: owner.playerId, secret: owner.secret });
+assert.equal(r.body.playerId, owner.playerId);
+r = await equip(owner, 'owner');
+assert.deepEqual([r.status, r.body.title], [200, 'owner']);
+assert.equal((await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Boss').title, 'owner');
+assert.equal((await equip(frank, 'owner')).status, 422, 'personne d\'autre');
+assert.ok(!(await call(profile, { url: '/api/profile?name=Frank' })).body.achievements.includes('owner'));
 
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

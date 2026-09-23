@@ -132,7 +132,7 @@
   const Ach = window.RNGAchievements;
   const titleHTML = id => {
     const a = id && Ach.byId.get(id);
-    return a ? `<span class="title-pill" title="${esc(a.desc)}">${a.emoji} <span class="t">${esc(a.title)}</span></span>` : '';
+    return a ? `<span class="title-pill${a.hidden ? ' special' : ''}" title="${esc(a.desc)}">${a.emoji} <span class="t">${esc(a.title)}</span></span>` : '';
   };
 
   function noteAchievements(list) {
@@ -1536,6 +1536,10 @@
     $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''} ${titleHTML(p.title)}`;
     if (me) noteAchievements(p.achievements);
     const unlocked = new Set(p.achievements || []);
+    // Les succès cachés (Owner) n'apparaissent que chez qui les a.
+    const achList = Ach.LIST.filter(a => !a.hidden || unlocked.has(a.id));
+    const achTotal = Ach.LIST.filter(a => !a.hidden).length;
+    const achDone = [...unlocked].filter(id => Ach.byId.has(id) && !Ach.byId.get(id).hidden).length;
     $('#p-body').innerHTML = `
       <p class="panel-note profile-sub">${p.rolls ? `Playing since ${day(p.since)} · last roll ${relTime(p.last)}` : 'No rolls yet'}</p>
       <div class="tiles">
@@ -1547,8 +1551,8 @@
       </div>
       ${!me && mine ? compareHTML(mine, p) : ''}
       <div class="panel">
-        <div class="panel-head"><h3 class="panel-title">Achievements</h3><span class="panel-note">${unlocked.size} / ${Ach.LIST.length} unlocked${me ? ' · equip one: its title shows next to your name on the leaderboard' : ''}</span></div>
-        <div class="ach-grid">${Ach.LIST.map(a => {
+        <div class="panel-head"><h3 class="panel-title">Achievements</h3><span class="panel-note">${achDone} / ${achTotal} unlocked${me ? ' · equip one: its title shows next to your name on the leaderboard' : ''}</span></div>
+        <div class="ach-grid">${achList.map(a => {
           const on = unlocked.has(a.id), equipped = p.title === a.id;
           const action = !me || !on ? '' : equipped
             ? '<button class="btn ach-btn" data-equip="">Unequip</button>'
