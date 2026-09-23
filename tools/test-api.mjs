@@ -452,6 +452,8 @@ assert.equal((await call(leaderboard, { url: '/api/leaderboard?period=all' })).b
 assert.equal((await equip(frank, 'owner')).status, 422, 'personne d\'autre');
 assert.ok(!(await call(profile, { url: '/api/profile?name=Frank' })).body.achievements.includes('owner'));
 
+const gina = { playerId: '8'.repeat(16), secret: 'a'.repeat(32), name: 'Gina' };
+
 // 15. Pièces et skins : gagnées en tirant (selon la rareté) et en duel, dépensées une seule fois, visibles en duel.
 const shopApi = require(path.join(ROOT, 'api/shop.js'));
 const Shop = require(path.join(ROOT, 'js/shop.js'));
@@ -472,6 +474,10 @@ assert.deepEqual([r.body.coins, r.body.skin, r.body.owned.includes('neon')], [co
 assert.equal((await shop(frank, 'buy', 'neon')).body.coins, coins0 + 300, 'racheter ne débite pas deux fois');
 assert.equal((await shop(frank, 'equip', 'classic')).body.skin, 'classic');
 assert.equal((await shop(frank, 'equip', 'neon')).body.skin, 'neon');
+// Skin remplacé : qui avait acheté Donut possède et porte Slots, sans racheter.
+run([['SADD', `skins:${gina.playerId}`, 'donut'], ['HSET', 'skins', gina.playerId, 'donut']]);
+r = await call(shopApi, { url: `/api/shop?me=${gina.playerId}` });
+assert.deepEqual([r.body.owned.includes('slots'), r.body.owned.includes('donut'), r.body.skin], [true, false, 'slots']);
 r = await roomPost(frank, 'create', { size: 2, public: false });
 assert.equal(r.body.players[0].skin, 'neon', 'le skin se voit en duel');
 const privateRoom = r.body.code;
@@ -503,7 +509,7 @@ if (state.winner !== null) {
 }
 
 // 18. Bots : toujours prêts, ils tirent comme tout le monde, mais une partie avec des bots ne compte pas en duel.
-const gina = { playerId: '8'.repeat(16), secret: 'a'.repeat(32), name: 'Gina' };
+
 r = await roomPost(gina, 'create', { size: 5, mode: 'rounds', target: 2, bots: 2, public: true });
 assert.equal(r.status, 200, JSON.stringify(r.body));
 const botRoom = r.body.code;

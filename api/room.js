@@ -216,7 +216,7 @@ async function view(room, me) {
 // Titre et skin équipés d'un joueur au moment où il entre dans la salle (affichés à côté de son nom et sur ses cartes).
 async function seat(id, name) {
   const [title, skin] = await redis([['HGET', 'titles', id], ['HGET', 'skins', id]]);
-  return { id, name, title: title || null, skin: skin || null };
+  return { id, name, title: title || null, skin: Shop.resolve(skin) || null };
 }
 
 // "Live now" : les 10 parties publiques les plus récemment actives, sans identifiant.

@@ -141,7 +141,10 @@
   // on annonce ceux que cet appareil n'a pas encore vus. Le titre d'un succès s'équipe depuis son profil.
   const Ach = window.RNGAchievements;
   const Shop = window.RNGShop;
-  const skinClass = id => (id && id !== 'classic' && Shop.byId.has(id) ? ` skin-${id}` : '');
+  const skinClass = raw => {
+    const id = Shop.resolve(raw);
+    return id && id !== 'classic' && Shop.byId.has(id) ? ` skin-${id}` : '';
+  };
   const slotsHTML = str => str.split('').map(c => `<span class="slot">${c}</span>`).join('');
   const titleHTML = id => {
     const a = id && Ach.byId.get(id);

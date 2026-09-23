@@ -10,11 +10,13 @@ const ownedKey = id => `skins:${id}`;
 async function state(id) {
   const stats = await readStats(id);
   const [owned, skin] = await redis([['SMEMBERS', ownedKey(id)], ['HGET', 'skins', id]]);
+  const mine = [...new Set((owned || []).map(Shop.resolve))].filter(s => s !== 'classic' && Shop.byId.has(s));
+  const equipped = Shop.resolve(skin);
   return {
     coins: Shop.balance(stats),
     earned: Shop.earned(stats),
-    owned: ['classic', ...(owned || []).filter(s => s !== 'classic' && Shop.byId.has(s))],
-    skin: skin && Shop.byId.has(skin) ? skin : 'classic',
+    owned: ['classic', ...mine],
+    skin: equipped && Shop.byId.has(equipped) ? equipped : 'classic',
   };
 }
 
