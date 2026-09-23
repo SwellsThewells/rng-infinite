@@ -1615,7 +1615,8 @@
   // Premier à 3 manches (5 au plus). Ce sont des tirages normaux : historique, XP et classement.
   const roomHref = code => `#/room/${code}`;
   const ROOM_POLL_MS = 1500;
-  const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null };
+  const ROOM_IDLE_MS = 10 * 60000; // sans aucun changement pendant 10 min, on arrête de sonder (quota de la base)
+  const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null, sig: '', changedAt: 0 };
 
   function roomError(err, retry) {
     if (err.status === 409) { askName(retry, '', `"${Store.player.name}" is already taken by another player. Pick a new name.`); return; }
@@ -1678,7 +1679,7 @@
   function renderRoom(code) {
     currentView = 'room';
     stopRoom();
-    Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null });
+    Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null, sig: '', changedAt: Date.now() });
     app.innerHTML = `
       <div class="page page-wide">
         <a class="back-link" href="#/">← Home</a>
@@ -1702,6 +1703,14 @@
       }
     }
     if (token !== Room.token || currentView !== 'room' || document.hidden) return;
+    // Onglet oublié ouvert (ami qui ne vient pas, adversaire parti) : pause au bout de 10 min sans changement.
+    if (Date.now() - Room.changedAt > ROOM_IDLE_MS) {
+      if (!$('#room-idle')) {
+        $('#room-body').insertAdjacentHTML('beforeend', '<p class="room-wait" id="room-idle" style="animation:none">Paused after 10 minutes without activity. <button class="btn" id="room-resume">Resume</button></p>');
+        $('#room-resume').addEventListener('click', () => { $('#room-idle').remove(); Room.changedAt = Date.now(); pollRoom(Room.token); });
+      }
+      return;
+    }
     // Duel fini : sondé plus lentement, seulement pour voir arriver la revanche de l'adversaire.
     const d = Room.data;
     if (!d || d.status !== 'done') Room.timer = setTimeout(() => pollRoom(token), ROOM_POLL_MS);
@@ -1714,6 +1723,11 @@
     if (got - sent <= Room.rtt) {
       Room.rtt = got - sent;
       Room.offset = d.now - (sent + got) / 2;
+    }
+    const sig = JSON.stringify([d.status, d.rounds.length, d.players.map(p => p && p.ready), d.next]);
+    if (sig !== Room.sig) {
+      Room.sig = sig;
+      Room.changedAt = Date.now();
     }
     if (!Room.data) {
       // Arrivée en cours de duel : les manches déjà finies s'affichent sans animation.
@@ -2092,7 +2106,11 @@
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && currentView === 'leaderboard') drawLeaderboard();
-    if (!document.hidden && currentView === 'room' && Room.code) pollRoom(Room.token);
+    if (!document.hidden && currentView === 'room' && Room.code) {
+      Room.changedAt = Date.now();
+      if ($('#room-idle')) $('#room-idle').remove();
+      pollRoom(Room.token);
+    }
   });
 
   window.addEventListener('hashchange', route);
