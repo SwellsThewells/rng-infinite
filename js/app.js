@@ -2376,6 +2376,23 @@
       </div>`).join('') : '<div class="empty">No round yet.</div>');
   }
 
+  // Badges d'une carte de duel : les 2 plus gros, + le nombre des autres. Survol = détail (description, calcul, XP,
+  // badges inclus) ; clic = fiche du badge (sur téléphone, sans survol).
+  function duelBadgesHTML(a, n) {
+    const tipOf = g => {
+      const b = g.badge, detail = badgeDetail(b.id, n);
+      const subs = g.subsidiary.length ? `<br><span style="opacity:.75">Includes ${g.subsidiary.map(sb => `${sb.emoji} ${esc(sb.label)}`).join(', ')}</span>` : '';
+      return `<b>${b.emoji} ${esc(b.label)}</b> · ${b.tier}<br>${esc(b.desc)}${detail ? `<br><b>${esc(detail)}</b>` : ''}<br><b>+${fmt(b.score)} XP</b>${subs}`;
+    };
+    const pills = a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}" data-badge="${g.badge.id}" data-tip="${esc(tipOf(g))}" style="cursor:help">${g.badge.emoji} ${esc(g.badge.label)}</span>`);
+    const rest = a.groups.slice(2);
+    if (rest.length) {
+      const list = rest.map(g => `${g.badge.emoji} ${esc(g.badge.label)} · +${fmt(g.badge.score)} XP`).join('<br>');
+      pills.push(`<span class="badge-pill more-pill" data-tip="${esc(`<b>${plural(rest.length, 'more badge')}</b><br>${list}`)}" style="cursor:help">+${rest.length}</span>`);
+    }
+    return pills.join('');
+  }
+
   // Scène : une carte par joueur. Sans manche : "??????" ; sinon la manche révélée, avec son gagnant.
   function stageHTML(r, spinning = false) {
     const d = Room.data;
@@ -2390,7 +2407,7 @@
           <div class="room-name">${won ? '🏆 ' : ''}${p.bot ? '🤖 ' : ''}${esc(p.name)}${titleEmoji(p.title)}</div>
           ${card}
           <div class="room-meta" id="rm-${j}">${a ? `${tierPill(a.tier)}<span class="ep-pill">${fmt(a.total)} XP</span>` : ''}</div>
-          <div class="pill-row" id="rb-${j}">${a ? a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('') : ''}</div>
+          <div class="pill-row" id="rb-${j}">${a ? duelBadgesHTML(a, r.n[j]) : ''}</div>
         </div>`;
     });
     return d.players.length === 2 ? sides.join('<div class="room-vs">VS</div>') : sides.join('');
@@ -2447,7 +2464,7 @@
         cards[j].dataset.tier = x.a.tier;
         $(`#rm-${j}`).innerHTML = `${tierPill(x.a.tier)}<span class="ep-pill">0 XP</span>`;
         countUp($(`#rm-${j} .ep-pill`), 0, x.s, reducedMotion ? 0 : 700, v => `${fmt(v)} XP`);
-        $(`#rb-${j}`).innerHTML = x.a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('');
+        $(`#rb-${j}`).innerHTML = duelBadgesHTML(x.a, x.n);
         FX.celebrate(x.a.tier, cards[j]);
       });
     });
