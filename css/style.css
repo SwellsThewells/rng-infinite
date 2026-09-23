@@ -895,9 +895,22 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 /* titres et succès */
 .title-pill { display: inline-flex; align-items: center; gap: .25rem; margin-left: .4rem; padding: .08rem .45rem; border: 1px solid var(--ep-outline); border-radius: 999px; background: var(--ep-surface); color: var(--ep-text); font-size: .64rem; font-weight: 700; letter-spacing: .02em; text-transform: none; white-space: nowrap; vertical-align: middle; }
 .page-title .title-pill { font-size: .9rem; letter-spacing: 0; }
-.title-owner { margin-left: .45rem; color: #be123c; font-size: .74rem; font-weight: 800; letter-spacing: .02em; text-transform: none; white-space: nowrap; vertical-align: middle; }
-.dark .title-owner { color: #f43f5e; }
-.page-title .title-owner { font-size: 1rem; }
+/* Owner : texte rouge sans cadre, en petites capitales espacées, une couronne fine et un reflet discret toutes les 6 s. */
+.title-owner {
+  --owner-a: #9f1239; --owner-b: #e11d48; --owner-shine: #fecdd3;
+  display: inline-flex; align-items: baseline; gap: .28em; margin-left: .45rem; vertical-align: middle; white-space: nowrap;
+  font-size: .68rem; font-weight: 800; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--owner-b);
+  background: linear-gradient(100deg, var(--owner-a) 0%, var(--owner-b) 35%, var(--owner-shine) 50%, var(--owner-b) 65%, var(--owner-a) 100%) 100% 0 / 260% 100%;
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
+  animation: owner-sheen 6s ease-in-out infinite;
+}
+.title-owner::before { content: '♛'; font-size: 1.05em; letter-spacing: 0; -webkit-text-fill-color: var(--owner-b); color: var(--owner-b); }
+.dark .title-owner { --owner-a: #e11d48; --owner-b: #fb7185; --owner-shine: #fff1f2; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .title-owner { --owner-a: #e11d48; --owner-b: #fb7185; --owner-shine: #fff1f2; } }
+:root[data-theme="dark"] .title-owner { --owner-a: #e11d48; --owner-b: #fb7185; --owner-shine: #fff1f2; }
+.page-title .title-owner { font-size: .9rem; }
+@keyframes owner-sheen { 0%, 70% { background-position: 100% 0; } 100% { background-position: 0 0; } }
 .lb-who { display: flex; align-items: center; min-width: 0; }
 .lb-who .lb-name { flex: 0 1 auto; }
 .ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem; }
