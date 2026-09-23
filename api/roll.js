@@ -27,8 +27,8 @@ module.exports = async (req, res) => {
 
     const n = crypto.randomInt(0, 1000001);
     const t = Date.now();
-    const { s, bestToday, dayRank } = await recordRoll(playerId, n, t);
-    return send(res, 200, { n, s, t, bestToday, dayRank });
+    const { s, bestToday, dayRank, achievements } = await recordRoll(playerId, n, t);
+    return send(res, 200, { n, s, t, bestToday, dayRank, achievements });
   } catch (err) {
     return send(res, err.status || 500, { error: err.message });
   }

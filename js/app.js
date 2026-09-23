@@ -47,6 +47,10 @@
       const p = Store.player;
       return this.request('/api/roll', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name }) });
     },
+    equip(title) {
+      const p = Store.player;
+      return this.request('/api/title', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, title }) });
+    },
     room(code) {
       return this.request(`/api/room?code=${encodeURIComponent(code)}&me=${Store.player.id}`);
     },
@@ -114,12 +118,33 @@
   const fullDate = t => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   let toastTimer = 0;
-  function toast(msg) {
+  function toast(msg, ms = 2600) {
     const el = $('#toast');
     el.textContent = msg;
     el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.hidden = true; }, 2600);
+    toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+  }
+
+  // ---------------------------------------------------------------- succès et titres
+  // Le serveur renvoie la liste des succès débloqués (après un tirage, sur le profil, en fin de duel) ;
+  // on annonce ceux que cet appareil n'a pas encore vus. Le titre d'un succès s'équipe depuis son profil.
+  const Ach = window.RNGAchievements;
+  const titleHTML = id => {
+    const a = id && Ach.byId.get(id);
+    return a ? `<span class="title-pill" title="${esc(a.desc)}">${a.emoji} <span class="t">${esc(a.title)}</span></span>` : '';
+  };
+
+  function noteAchievements(list) {
+    if (!Array.isArray(list)) return;
+    const seen = Store.settings.achSeen;
+    Store.setSetting('achSeen', list);
+    if (!Array.isArray(seen)) return; // première liste reçue sur cet appareil : pas d'avalanche d'annonces
+    const fresh = list.filter(id => !seen.includes(id)).map(id => Ach.byId.get(id)).filter(Boolean);
+    if (!fresh.length) return;
+    toast(fresh.length === 1
+      ? `🏆 Achievement unlocked: ${fresh[0].emoji} ${fresh[0].title}. Equip its title from your profile`
+      : `🏆 ${fresh.length} achievements unlocked: ${fresh.map(a => `${a.emoji} ${a.title}`).join(', ')}`, 6000);
   }
 
   // Analyses mises en cache : un nombre donne toujours le même résultat.
@@ -525,6 +550,7 @@
         <p class="field-error" id="set-name-error" hidden></p>
         <span class="panel-note">Shown on the leaderboard. Each name belongs to one player only.</span>
       </div>
+      ${Store.player.name ? `<div class="field"><label>Achievements</label><a class="btn" href="${profileHref(Store.player.name)}" id="set-profile">🏆 My profile, achievements & title</a></div>` : ''}
       ${googleAccountHTML()}
       <div class="field"><label>Roll animation</label>${seg('speed', ['dramatic', 'normal'], SPEEDS[s.speed] ? s.speed : 'normal', SPEED_LABELS)}</div>
       <div class="field"><label>Theme</label>${seg('theme', ['light', 'system', 'dark'], s.theme)}</div>
@@ -864,7 +890,7 @@
       <div class="feature-card" id="today-card" data-tier="${a.tier}" data-number="${entry.n}" data-caption="${esc(`Today's best · ${entry.name}`)}" style="cursor:pointer">
         <div class="eyebrow">Today's best roll</div>
         <span class="num-card md" data-tier="${a.tier}">${a.str}</span>
-        <div class="feature-meta">rolled by <a class="player-link" href="${profileHref(entry.name)}">${esc(entry.name)}</a>${entry.me ? ' (you)' : ''}</div>
+        <div class="feature-meta">rolled by <a class="player-link" href="${profileHref(entry.name)}">${esc(entry.name)}</a>${entry.me ? ' (you)' : ''} ${titleHTML(entry.title)}</div>
         <div class="pill-row">${pills}${more > 0 ? `<span class="more">+${more} more</span>` : ''}</div>
         <div class="ep-big" style="display:inline-block;font-size:.85rem">${fmt(entry.s)} XP</div>
         <div class="feature-meta" style="margin-bottom:0">${plural(rollsToday, 'roll')} today</div>
@@ -1058,6 +1084,7 @@
       show($('#r-hint'), 'fade-in');
       document.body.classList.remove('locked');
       canReroll = true;
+      if (ctx.online) noteAchievements(ctx.online.achievements);
     });
     step(REVEAL.stats, () => show($('#r-meta'), 'pop-in'));
     step(REVEAL.lifetimeShow, () => show($('#r-life'), 'fade-in'));
@@ -1506,7 +1533,9 @@
     const day = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
     const caption = x => `${p.name} · ${fullDate(x.t)}`;
     const collectionState = { filter: 'all', q: '' };
-    $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''}`;
+    $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''} ${titleHTML(p.title)}`;
+    if (me) noteAchievements(p.achievements);
+    const unlocked = new Set(p.achievements || []);
     $('#p-body').innerHTML = `
       <p class="panel-note profile-sub">${p.rolls ? `Playing since ${day(p.since)} · last roll ${relTime(p.last)}` : 'No rolls yet'}</p>
       <div class="tiles">
@@ -1517,6 +1546,16 @@
         ${tile('Badges', `${found}/${total}`, `${((found / total) * 100).toFixed(0)}% of the collection`)}
       </div>
       ${!me && mine ? compareHTML(mine, p) : ''}
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title">Achievements</h3><span class="panel-note">${unlocked.size} / ${Ach.LIST.length} unlocked${me ? ' · equip one: its title shows next to your name on the leaderboard' : ''}</span></div>
+        <div class="ach-grid">${Ach.LIST.map(a => {
+          const on = unlocked.has(a.id), equipped = p.title === a.id;
+          const action = !me || !on ? '' : equipped
+            ? '<button class="btn ach-btn" data-equip="">Unequip</button>'
+            : `<button class="btn ach-btn" data-equip="${a.id}">Equip</button>`;
+          return `<div class="ach${on ? '' : ' locked'}${equipped ? ' equipped' : ''}"><span class="ach-emoji">${on ? a.emoji : '🔒'}</span><span class="ach-text"><b>${esc(a.title)}</b><span>${esc(a.desc)}</span></span>${action}</div>`;
+        }).join('')}</div>
+      </div>
       <div class="panel">
         <div class="panel-head"><h3 class="panel-title">Best rolls</h3><span class="panel-note">click a number for its badges</span></div>
         ${p.best.length ? `<div class="records">${p.best.map((x, k) => {
@@ -1536,6 +1575,22 @@
         ${collectionHTML(found, collectionState)}
       </div>`;
     mountCollection(profileCollection(p.badges), collectionState);
+    if (me) {
+      $('#p-body').querySelector('.ach-grid').addEventListener('click', async e => {
+        const btn = e.target.closest('[data-equip]');
+        if (!btn) return;
+        btn.disabled = true;
+        try {
+          const r = await Online.equip(btn.dataset.equip);
+          const a = Ach.byId.get(r.title);
+          toast(a ? `Title equipped: ${a.emoji} ${a.title}` : 'Title removed');
+          renderProfile(p.name);
+        } catch (err) {
+          btn.disabled = false;
+          toast(err.status === 422 ? err.message : 'Could not change your title, try again');
+        }
+      });
+    }
   }
 
   // Comparaison complète avec un autre joueur (deux profils calculés par le serveur) :
@@ -1617,7 +1672,9 @@
   const ROOM_POLL_MS = 1500;
   const ROOM_IDLE_MS = 10 * 60000; // sans aucun changement pendant 10 min, on arrête de sonder (quota de la base)
   const XP_TARGETS = [25000, 50000, 100000, 250000, 1000000];
-  const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null, sig: '', changedAt: 0 };
+  const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null, sig: '', changedAt: 0, reactSeen: new Set(), reactBusy: false, achNoted: false };
+  const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
+  const titleEmoji = id => (id && Ach.byId.get(id) ? ` ${Ach.byId.get(id).emoji}` : '');
   const goalText = d => (d.mode === 'xp' ? `first to ${compact(d.target)} XP` : `first to ${plural(d.target, 'round win')}`);
 
   // Derniers réglages choisis, retenus sur l'appareil.
@@ -1742,7 +1799,7 @@
   function renderRoom(code) {
     currentView = 'room';
     stopRoom();
-    Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null, sig: '', changedAt: Date.now() });
+    Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null, sig: '', changedAt: Date.now(), reactSeen: new Set(), achNoted: false });
     app.innerHTML = `
       <div class="page page-wide">
         <a class="back-link" href="#/duel">← Duel</a>
@@ -1798,7 +1855,37 @@
     }
     Room.data = d;
     drawRoom();
+    for (const r of d.reacts || []) {
+      const key = `${r.t}:${r.name}:${r.e}`;
+      if (Room.reactSeen.has(key)) continue;
+      Room.reactSeen.add(key);
+      if (serverNow() - r.t < 6000) reactBubble(r);
+    }
     if (!Room.anim && Room.shown < d.rounds.length) playRound(Room.shown);
+  }
+
+  // Réactions : bulles qui montent au-dessus des cartes, avec le nom de l'envoyeur.
+  function reactBubble(r) {
+    const layer = $('#react-layer');
+    if (!layer) return;
+    const el = document.createElement('span');
+    el.className = 'react-bubble';
+    el.style.left = `${8 + Math.random() * 84}%`;
+    el.innerHTML = `${r.e}<small>${esc(r.name)}</small>`;
+    layer.appendChild(el);
+    setTimeout(() => el.remove(), 2800);
+  }
+
+  async function sendReaction(emoji) {
+    if (Room.reactBusy || !Room.data || !Room.data.players.some(p => p.me)) return;
+    Room.reactBusy = true;
+    setTimeout(() => { Room.reactBusy = false; }, 700);
+    const token = Room.token, sent = Date.now();
+    try {
+      applyRoom(await Online.roomAction('react', Room.code, { emoji }), token, sent, Date.now());
+    } catch (err) {
+      if (err.status !== 429) toast('Reaction not sent');
+    }
   }
 
   // Durée d'une révélation : les chiffres au rythme d'origine, puis l'XP et le gagnant de la manche.
@@ -1835,7 +1922,7 @@
         body.innerHTML = '<div class="room-code-box" id="room-lobby"></div>';
       }
       const host = d.players.find(p => p.host);
-      const seats = d.players.map(p => `<span class="badge-pill">${p.host ? '👑 ' : ''}${esc(p.name)}${p.me ? ' (you)' : ''}</span>`).join('')
+      const seats = d.players.map(p => `<span class="badge-pill">${p.host ? '👑 ' : ''}${esc(p.name)}${titleEmoji(p.title)}${p.me ? ' (you)' : ''}</span>`).join('')
         + '<span class="badge-pill empty-seat">…</span>'.repeat(Math.max(0, d.size - d.players.length));
       const wait = !me ? '' : me.host
         ? (d.players.length > 1 ? 'Start now, or wait: the game starts by itself when it is full' : 'Waiting for players…')
@@ -1867,10 +1954,16 @@
       body.innerHTML = `
         <p class="panel-note profile-sub">${d.players.length} players · ${goalText(d)} · each round goes to the highest roll · duel rolls count on the leaderboard</p>
         <div class="room-board" id="room-board"></div>
-        <div class="room-stage${d.players.length > 2 ? ' many' : ''}" id="room-stage"></div>
+        <div class="room-arena">
+          <div class="room-stage${d.players.length > 2 ? ' many' : ''}" id="room-stage"></div>
+          <div class="react-layer" id="react-layer" aria-hidden="true"></div>
+        </div>
+        ${me ? `<div class="room-reacts" id="room-reacts">${REACTIONS.map((e, i) => `<button class="react-btn" data-react="${e}" title="Press ${i + 1}">${e}</button>`).join('')}</div>` : ''}
         <div class="room-actions"><div id="room-cta"></div><p class="hint" id="room-hint"></p></div>
         <div class="panel"><div class="panel-head"><h3 class="panel-title">Rounds</h3></div><div id="room-rounds"></div></div>`;
       if (!Room.anim) $('#room-stage').innerHTML = stageHTML(Room.shown ? d.rounds[Room.shown - 1] : null);
+      const reacts = $('#room-reacts');
+      if (reacts) reacts.addEventListener('click', e => { const b = e.target.closest('[data-react]'); if (b) sendReaction(b.dataset.react); });
     }
 
     // Classement de la partie : manches gagnées (puis XP), ou barre de progression vers le palier d'XP.
@@ -1882,13 +1975,17 @@
         ? `<span class="xp-bar"><span style="width:${Math.min(100, (totals[i] / d.target) * 100)}%"></span></span><span class="mono">${compact(totals[i])} / ${compact(d.target)}</span>`
         : `<span class="mono board-wins">${wins[i]} / ${d.target}</span><span class="panel-note">${compact(totals[i])} XP</span>`;
       const ready = d.status === 'playing' && p.ready && !Room.anim ? '<span class="ready-chip">ready</span>' : '';
-      return `<div class="board-row${p.me ? ' me' : ''}"><span class="rank">${k + 1}</span><a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
+      return `<div class="board-row${p.me ? ' me' : ''}"><span class="rank">${k + 1}</span><a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>${titleHTML(p.title)}${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
     }).join(''));
 
     const finished = d.status === 'done' && Room.shown === d.rounds.length && !Room.anim;
     const readyCount = d.players.filter(p => p.ready).length;
     const countdown = d.autoAt ? ` · starts by itself in ${Math.max(0, Math.ceil((d.autoAt - serverNow()) / 1000))} s` : '';
     let cta, hint = '';
+    if (finished && !Room.achNoted && d.achievements) {
+      Room.achNoted = true;
+      noteAchievements(d.achievements);
+    }
     if (finished) {
       const w = d.winner;
       const how = w === null ? '' : d.mode === 'xp' ? ` with ${fmt(totals[w])} XP` : ` with ${plural(wins[w], 'round')}`;
@@ -1943,7 +2040,7 @@
         : `<div class="num-card md neutral${spinning ? ' charging' : ''}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
       return `
         <div class="room-side${won ? ' won' : ''}${p.me ? ' me' : ''}" id="rs-${j}">
-          <div class="room-name">${won ? '🏆 ' : ''}${esc(p.name)}</div>
+          <div class="room-name">${won ? '🏆 ' : ''}${esc(p.name)}${titleEmoji(p.title)}</div>
           ${card}
           <div class="room-meta" id="rm-${j}">${a ? `${tierPill(a.tier)}<span class="ep-pill">${fmt(a.total)} XP</span>` : ''}</div>
           <div class="pill-row" id="rb-${j}">${a ? a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('') : ''}</div>
@@ -2078,7 +2175,7 @@
     return `
       <div class="lb-row${e.me ? ' me' : ''}" data-number="${e.n}" data-caption="${esc(`#${e.rank} · ${e.name} · ${relTime(e.t)}`)}">
         <span class="lb-rank">${medal || '#' + e.rank}</span>
-        <a class="lb-name" href="${profileHref(e.name)}" title="See ${esc(e.name)}'s profile">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</a>
+        <span class="lb-who"><a class="lb-name" href="${profileHref(e.name)}" title="See ${esc(e.name)}'s profile">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</a>${titleHTML(e.title)}</span>
         <span class="lb-rolls mono" title="Rolls by this player ${{ day: 'today', week: 'this week', all: 'in total' }[lbState.period]}">${e.rolls ? plural(e.rolls, 'roll') : '–'}</span>
         <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
         <span class="lb-ep mono">${fmt(e.s)} XP</span>
@@ -2108,6 +2205,7 @@
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
+        <p>Achievements unlock titles: equip one from your profile and it shows next to your name on the leaderboard and in duels. They are checked by the server, so nobody can wear a title they did not earn.</p>
         <p>Duel (top menu): create a game for 2 to 10 players and send the code. Everyone rolls at the same time and all numbers are revealed together; each round goes to the highest roll. Win by being first to 1–10 round wins, or first to an XP total. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
         <p class="muted">Based on the daily game <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>: this version removes the daily limit and adds history, stats, Google sign-in and a leaderboard between friends.</p>
@@ -2168,10 +2266,14 @@
   document.addEventListener('keydown', e => {
     const modalOpen = !!$('#modal-root').firstChild;
     if (e.key === 'Escape' && modalOpen) { closeModal(); return; }
-    if (!modalOpen && currentView === 'room' && (e.code === 'Space' || e.key === ' ') && e.target.tagName !== 'INPUT') {
-      e.preventDefault();
-      if (!e.repeat) roomReady();
-      return;
+    if (!modalOpen && currentView === 'room' && e.target.tagName !== 'INPUT') {
+      if (e.code === 'Space' || e.key === ' ') {
+        e.preventDefault();
+        if (!e.repeat) roomReady();
+        return;
+      }
+      const k = Number(e.key);
+      if (k >= 1 && k <= REACTIONS.length && !e.metaKey && !e.ctrlKey && !e.altKey) { sendReaction(REACTIONS[k - 1]); return; }
     }
     if (modalOpen || (currentView !== 'home' && currentView !== 'result')) return;
     const tag = e.target.tagName;
@@ -2192,6 +2294,7 @@
     return String(h);
   })();
   Store.dedupeRolls();
+  if (!Store.rolls.length && !Array.isArray(Store.settings.achSeen)) Store.setSetting('achSeen', []);
   Store.rescore(n => Engine.scoreOf(n), SCORE_VERSION);
 
   document.addEventListener('visibilitychange', () => {

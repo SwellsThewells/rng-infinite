@@ -5,10 +5,11 @@
 // Les tirages sont des tirages normaux (historique, compteurs, classement), faits par le serveur au même instant pour
 // tous les joueurs. Une manche part quand tout le monde est prêt, ou 15 s après le premier joueur prêt : un absent ne
 // bloque pas la partie (son nombre est tiré quand même, comme celui des autres).
-//   POST /api/room { action: 'create' | 'join' | 'start' | 'ready' | 'rematch', code?, size?, mode?, target?, playerId, secret, name }
+// Pendant la partie, les joueurs peuvent envoyer des réactions (emoji) que tout le monde voit en direct.
+//   POST /api/room { action: 'create' | 'join' | 'start' | 'ready' | 'react' | 'rematch', code?, size?, mode?, target?, emoji?, playerId, secret, name }
 //   GET  /api/room?code=<code>&me=<playerId>   (sondé toutes les ~1,5 s par les joueurs et les spectateurs)
 const crypto = require('node:crypto');
-const { engine, redis, cleanName, claimPlayer, claimName, recordRoll, cors, send } = require('./_lib');
+const { engine, redis, cleanName, claimPlayer, claimName, recordRoll, readStats, statsKey, Achievements, cors, send } = require('./_lib');
 
 const MIN_PLAYERS = 2, MAX_PLAYERS = 10;
 const MAX_WINS = 10;
@@ -18,10 +19,14 @@ const LEAD_MS = 2500; // délai avant la révélation commune : tout le monde a 
 const GAP_MS = 8000; // écart minimal entre deux manches, comme le délai entre deux tirages
 const AUTO_MS = 15000; // la manche part toute seule 15 s après le premier joueur prêt
 const TTL = 86400; // une salle est gardée un jour après sa dernière action
+const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
+const REACT_SHOWN_MS = 15000; // réactions renvoyées aux sondages pendant 15 s
+const REACT_EVERY_MS = 700; // au plus une réaction toutes les 0,7 s par joueur
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O ni 1/I, 32 signes
 const roomKey = code => `room:${code}`;
 const playersKey = code => `room:${code}:players`;
 const roundsKey = code => `room:${code}:rounds`;
+const reactsKey = code => `room:${code}:reacts`;
 const isCode = code => /^[A-Z2-9]{5}$/.test(code);
 const isPlayerId = id => /^[0-9a-f]{16}$/.test(String(id || ''));
 const newCode = () => Array.from(crypto.randomBytes(5), b => ALPHABET[b % 32]).join('');
@@ -37,10 +42,11 @@ function rules(body) {
 }
 
 // Une salle : son hash (règles, hôte, "ready:<id>" = manche pour laquelle le joueur est prêt, "first:<k>" = heure du
-// premier prêt), la liste ordonnée des joueurs { id, name } et la liste des manches { t, revealAt, n: [un nombre par joueur] }.
+// premier prêt), la liste ordonnée des joueurs { id, name, title }, les manches { t, revealAt, n: [un nombre par joueur] }
+// et les dernières réactions { t, i (index du joueur), e }.
 async function load(code) {
-  const [flat, players, rounds] = await redis([
-    ['HGETALL', roomKey(code)], ['LRANGE', playersKey(code), 0, -1], ['LRANGE', roundsKey(code), 0, -1],
+  const [flat, players, rounds, reacts] = await redis([
+    ['HGETALL', roomKey(code)], ['LRANGE', playersKey(code), 0, -1], ['LRANGE', roundsKey(code), 0, -1], ['LRANGE', reactsKey(code), -20, -1],
   ]);
   const h = {};
   for (let i = 0; i < (flat || []).length; i += 2) h[flat[i]] = flat[i + 1];
@@ -48,6 +54,7 @@ async function load(code) {
   return {
     code, h, host: h.host, size: Number(h.size), mode: h.mode, target: Number(h.target), started: h.started === '1',
     players: (players || []).map(p => JSON.parse(p)), rounds: (rounds || []).map(r => JSON.parse(r)),
+    reacts: (reacts || []).map(r => JSON.parse(r)),
   };
 }
 
@@ -107,11 +114,28 @@ async function advance(room, now = Date.now()) {
   ]);
   await Promise.all(room.players.map((p, i) => recordRoll(p.id, round.n[i], round.t)));
   room.rounds.push(round);
+  await recordDuel(room);
   return room;
 }
 
-// État public, sans identifiant : `me` marque le joueur qui regarde.
-function view(room, me) {
+// Dernière manche tirée (une seule fois, sous le verrou) : résultat de la partie dans les stats des succès.
+async function recordDuel(room) {
+  const sc = score(room);
+  if (!sc.done) return;
+  const writes = room.players.map(p => ['HINCRBY', statsKey(p.id), 'duels', 1]);
+  if (sc.winner !== null) {
+    const w = statsKey(room.players[sc.winner].id);
+    writes.push(['HINCRBY', w, 'duelWins', 1]);
+    const alone = sc.wins.every((v, i) => i === sc.winner || v === 0);
+    if (room.mode !== 'xp' && room.target >= 2 && alone) writes.push(['HINCRBY', w, 'flawless', 1]);
+    if (room.players.length >= 5) writes.push(['HINCRBY', w, 'bigWin', 1]);
+    if (room.mode === 'xp') writes.push(['HINCRBY', w, 'xpWin', 1]);
+  }
+  await redis(writes);
+}
+
+// État public, sans identifiant : `me` marque le joueur qui regarde. Partie finie : ses succès, pour annoncer les nouveaux.
+async function view(room, me) {
   const sc = score(room);
   const k = room.rounds.length;
   const status = !room.started ? 'lobby' : sc.done ? 'done' : 'playing';
@@ -121,7 +145,7 @@ function view(room, me) {
   return {
     code: room.code, status, size: room.size, mode: room.mode, target: room.target,
     players: room.players.map((p, i) => ({
-      name: p.name, me: p.id === me, host: p.id === room.host,
+      name: p.name, title: p.title || null, me: p.id === me, host: p.id === room.host,
       ready: status === 'playing' && readyFor(room, p.id) === k, wins: sc.wins[i], total: sc.totals[i],
     })),
     rounds: sc.list,
@@ -131,9 +155,15 @@ function view(room, me) {
     nextAt: last ? last.revealAt + GAP_MS : 0,
     next: room.h.next || null, // code de la revanche, une fois lancée
     nextBy: room.h.nextBy || null, // nom de celui qui l'a lancée
+    reacts: room.reacts.filter(r => r.t > Date.now() - REACT_SHOWN_MS && room.players[r.i])
+      .map(r => ({ t: r.t, name: room.players[r.i].name, e: r.e })),
+    achievements: status === 'done' && room.players.some(p => p.id === me) ? Achievements.unlocked(await readStats(me)) : undefined,
     now: Date.now(),
   };
 }
+
+// Titre équipé d'un joueur au moment où il entre dans la salle (affiché à côté de son nom).
+const titleOf = async id => (await redis([['HGET', 'titles', id]]))[0] || null;
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
@@ -144,7 +174,7 @@ module.exports = async (req, res) => {
       const me = isPlayerId(params.get('me')) ? params.get('me') : '';
       const room = isCode(code) ? await load(code) : null;
       if (!room) return send(res, 404, { error: 'No duel with this code' });
-      return send(res, 200, view(await advance(room), me));
+      return send(res, 200, await view(await advance(room), me));
     }
     if (req.method !== 'POST') return send(res, 405, { error: 'Use GET or POST' });
 
@@ -163,7 +193,7 @@ module.exports = async (req, res) => {
         const code = newCode();
         const [created] = await redis([['HSETNX', roomKey(code), 'host', playerId]]);
         if (Number(created) !== 1) continue;
-        const list = players || [{ id: playerId, name }];
+        const list = players || [{ id: playerId, name, title: await titleOf(playerId) }];
         await redis([
           ['HSET', roomKey(code), 'size', players ? list.length : r.size, 'mode', r.mode, 'target', r.target, 'created', Date.now(),
             'count', list.length, 'started', players ? 1 : 0, ...list.flatMap(p => [`m:${p.id}`, 1])],
@@ -179,7 +209,7 @@ module.exports = async (req, res) => {
     if (body.action === 'create') {
       const code = await createRoom(rules(body), null);
       if (!code) return send(res, 503, { error: 'Could not create a duel, try again' });
-      return send(res, 200, view(await load(code), playerId));
+      return send(res, 200, await view(await load(code), playerId));
     }
 
     const code = String(body.code || '').trim().toUpperCase();
@@ -188,29 +218,29 @@ module.exports = async (req, res) => {
     const member = room.players.some(p => p.id === playerId);
 
     if (body.action === 'join') {
-      if (member) return send(res, 200, view(room, playerId));
+      if (member) return send(res, 200, await view(room, playerId));
       if (room.started) return send(res, 422, { error: 'This duel has already started' });
       // Une place à la fois : le marqueur de membre évite les doublons, le compteur évite de dépasser la taille.
       const [isNew] = await redis([['HSETNX', roomKey(code), `m:${playerId}`, 1]]);
-      if (Number(isNew) !== 1) return send(res, 200, view((await load(code)) || room, playerId));
+      if (Number(isNew) !== 1) return send(res, 200, await view((await load(code)) || room, playerId));
       const [count] = await redis([['HINCRBY', roomKey(code), 'count', 1]]);
       if (Number(count) > room.size) {
         await redis([['HINCRBY', roomKey(code), 'count', -1], ['HDEL', roomKey(code), `m:${playerId}`]]);
         return send(res, 422, { error: 'This duel is full' });
       }
-      const writes = [['RPUSH', playersKey(code), JSON.stringify({ id: playerId, name })]];
+      const writes = [['RPUSH', playersKey(code), JSON.stringify({ id: playerId, name, title: await titleOf(playerId) })]];
       if (Number(count) === room.size) writes.push(['HSET', roomKey(code), 'started', 1]); // complet : la partie commence
       await redis(writes);
-      return send(res, 200, view(await load(code), playerId));
+      return send(res, 200, await view(await load(code), playerId));
     }
 
     if (body.action === 'start') {
       if (room.host !== playerId) return send(res, 422, { error: 'Only the host can start the duel' });
-      if (room.started) return send(res, 200, view(room, playerId));
+      if (room.started) return send(res, 200, await view(room, playerId));
       if (room.players.length < MIN_PLAYERS) return send(res, 422, { error: 'Wait for at least one opponent' });
       // La partie se joue à ceux qui sont là ; la salle se ferme aux nouveaux venus.
       await redis([['HSET', roomKey(code), 'started', 1, 'size', room.players.length]]);
-      return send(res, 200, view(await load(code), playerId));
+      return send(res, 200, await view(await load(code), playerId));
     }
 
     if (body.action === 'ready') {
@@ -220,7 +250,20 @@ module.exports = async (req, res) => {
       const k = room.rounds.length;
       await redis([['HSET', roomKey(code), `ready:${playerId}`, k], ['HSETNX', roomKey(code), `first:${k}`, Date.now()]]);
       room = await advance(await load(code));
-      return send(res, 200, view(room, playerId));
+      return send(res, 200, await view(room, playerId));
+    }
+
+    // Réaction : un emoji de la liste, au plus une toutes les 0,7 s par joueur.
+    if (body.action === 'react') {
+      if (!member) return send(res, 422, { error: 'You are not in this duel' });
+      if (!REACTIONS.includes(body.emoji)) return send(res, 400, { error: 'Unknown reaction' });
+      const [ok] = await redis([['SET', `react:${playerId}`, '1', 'PX', REACT_EVERY_MS, 'NX']]);
+      if (ok !== 'OK') return send(res, 429, { error: 'Too many reactions' });
+      const i = room.players.findIndex(p => p.id === playerId);
+      const reaction = { t: Date.now(), i, e: body.emoji };
+      await redis([['RPUSH', reactsKey(code), JSON.stringify(reaction)], ['LTRIM', reactsKey(code), -30, -1], ['EXPIRE', reactsKey(code), TTL]]);
+      room.reacts.push(reaction);
+      return send(res, 200, await view(room, playerId));
     }
 
     // Revanche : une seule nouvelle salle par partie, mêmes joueurs et mêmes règles.
@@ -240,7 +283,7 @@ module.exports = async (req, res) => {
           [next] = await redis([['HGET', roomKey(code), 'next']]);
         }
       }
-      return send(res, 200, view(await load(next), playerId));
+      return send(res, 200, await view(await load(next), playerId));
     }
     return send(res, 400, { error: 'Unknown action' });
   } catch (err) {

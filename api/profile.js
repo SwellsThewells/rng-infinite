@@ -2,7 +2,7 @@
 // Profil public d'un joueur, ouvert depuis le classement : ses meilleurs tirages et sa collection de badges.
 // Calculé à partir de son historique (hist:<id>), comme ses propres pages History et Badges ; le classement,
 // lui, ne compte que les tirages faits par le serveur. Ni l'identifiant ni la liste complète des tirages ne sortent d'ici.
-const { engine, redis, cleanName, findPlayer, historyKey, rollSet, cors, send } = require('./_lib');
+const { engine, redis, cleanName, findPlayer, historyKey, rollSet, readStats, Achievements, cors, send } = require('./_lib');
 
 const BEST_LIMIT = 10;
 
@@ -15,12 +15,14 @@ module.exports = async (req, res) => {
     const id = await findPlayer(name);
     if (!id) return send(res, 404, { error: 'No player with this name' });
 
-    const [members, shownName, bestAll, rank] = await redis([
+    const [members, shownName, bestAll, rank, title] = await redis([
       ['ZRANGE', historyKey(id), 0, -1],
       ['HGET', 'names', id],
       ['HGET', 'best:all', id],
       ['ZREVRANK', 'lb:all', id],
+      ['HGET', 'titles', id],
     ]);
+    const achievements = Achievements.unlocked(await readStats(id));
 
     // Historique trié par date ; le meilleur tirage all-time y est ajouté s'il date d'avant l'historique serveur.
     // Comparé par nombre seul : un vieux tirage envoyé par l'appareil porte l'heure de l'appareil, pas celle du serveur.
@@ -64,6 +66,8 @@ module.exports = async (req, res) => {
       tiers,
       best,
       badges,
+      achievements, // succès débloqués (stats du serveur) et titre équipé
+      title: title || null,
     });
   } catch (err) {
     return send(res, err.status || 500, { error: err.message });

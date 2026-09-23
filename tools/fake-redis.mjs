@@ -49,6 +49,7 @@ export function fakeRedis() {
       for (const m of members) if (!s.has(m)) { s.add(m); added++; }
       return added;
     },
+    SCARD: k => (db.has(k) ? db.get(k).size : 0),
     SISMEMBER: (k, m) => (db.has(k) && db.get(k).has(m) ? 1 : 0),
     ZADD(k, ...pairs) {
       const z = zset(k);
@@ -73,6 +74,12 @@ export function fakeRedis() {
       return opts.includes('WITHSCORES') ? out.flatMap(([m, score]) => [m, String(score)]) : out.map(([m]) => m);
     },
     RPUSH(k, ...values) { const l = list(k); l.push(...values); return l.length; },
+    LTRIM(k, a, b) {
+      const l = db.get(k) || [];
+      const [s, e] = range(l.length, a, b);
+      db.set(k, l.slice(s, e + 1));
+      return 'OK';
+    },
     LLEN: k => (db.has(k) ? db.get(k).length : 0),
     LRANGE(k, a, b) {
       const l = db.get(k) || [];
@@ -90,6 +97,9 @@ export function fakeRedis() {
   };
 
   // Même format de réponse que l'API REST "pipeline" d'Upstash.
-  const run = commands => commands.map(([cmd, ...args]) => ({ result: COMMANDS[cmd](...args) }));
+  const run = commands => commands.map(([cmd, ...args]) => {
+    if (!COMMANDS[cmd]) throw new Error(`fake-redis : commande ${cmd} non gérée`);
+    return { result: COMMANDS[cmd](...args) };
+  });
   return { db, zset, run };
 }

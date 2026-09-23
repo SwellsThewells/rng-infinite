@@ -295,6 +295,17 @@ assert.ok(![alice, bob, carol].some(p => JSON.stringify(r.body).includes(p.playe
 assert.equal((await roomPost(dave, 'join', { code })).status, 422, 'partie commencée : plus de place');
 assert.equal((await roomPost(dave, 'ready', { code })).status, 422, 'un spectateur ne tire pas');
 
+// Réactions : un emoji de la liste, visible par tous, au plus une toutes les 0,7 s par joueur.
+r = await roomPost(alice, 'react', { code, emoji: '🔥' });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+assert.deepEqual(r.body.reacts.map(x => [x.name, x.e]), [['Alice', '🔥']]);
+assert.equal((await roomPost(alice, 'react', { code, emoji: '😂' })).status, 429, 'trop vite');
+assert.equal((await roomPost(carol, 'react', { code, emoji: '🍕' })).status, 400, 'emoji hors liste');
+assert.equal((await roomPost(dave, 'react', { code, emoji: '🔥' })).status, 422, 'un spectateur ne réagit pas');
+r = await roomGet(code, carol);
+assert.deepEqual(r.body.reacts.map(x => x.name), ['Alice'], 'les autres voient la réaction');
+assert.ok(r.body.players.every(p => 'title' in p));
+
 // Manche 1 : tant que tout le monde n'est pas prêt, rien ; le dernier prêt déclenche les 3 tirages ensemble.
 const histA = (await call(history, { method: 'POST', body: aliceTab })).body.rolls.length;
 const countOf = async name => (await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === name).rolls;
@@ -339,6 +350,11 @@ assert.deepEqual(state.players.map(p => p.wins), wins);
 assert.equal(Math.max(...wins), 2);
 assert.equal(state.winner, wins.indexOf(2));
 assert.equal((await roomPost(alice, 'ready', { code })).status, 422, 'partie finie');
+// Le gagnant débloque « Duelist » ; les joueurs reçoivent leurs succès à la fin, pour annoncer les nouveaux.
+const winnerWho = [alice, bobNow, carol][state.winner];
+r = await roomGet(code, winnerWho);
+assert.ok(r.body.achievements.includes('duelist'), 'le gagnant a le succès Duelist');
+assert.equal((await roomGet(code, dave)).body.achievements, undefined, 'rien pour un spectateur');
 
 // Revanche : une seule nouvelle salle, mêmes joueurs et mêmes règles, qui commence tout de suite.
 assert.equal((await roomPost(dave, 'rematch', { code })).status, 422, 'un spectateur ne lance pas de revanche');
@@ -382,5 +398,39 @@ assert.equal((await call(roomApi, { method: 'PUT' })).status, 405);
 r = await call(profile, { url: '/api/profile?name=Alice' });
 assert.equal(Object.values(r.body.tiers).reduce((x, y) => x + y, 0), r.body.rolls);
 assert.ok(r.body.luck >= 0 && r.body.luck <= 100);
+
+// 13. Succès et titres : calculés sur les stats du serveur, un titre ne s'équipe que débloqué.
+const titleApi = require(path.join(ROOT, 'api/title.js'));
+const equip = (who, title) => call(titleApi, { method: 'POST', body: { playerId: who.playerId, secret: who.secret, title } });
+const frank = { playerId: 'f'.repeat(16), secret: '6'.repeat(32), name: 'Frank' };
+db.delete(`cooldown:${frank.playerId}`);
+r = await call(roll, { method: 'POST', body: frank });
+assert.equal(r.status, 200);
+assert.ok(r.body.achievements.includes('rookie'), 'premier tirage : Rookie');
+assert.equal((await equip(frank, 'mythic')).status, r.body.s >= 0 && !r.body.achievements.includes('mythic') ? 422 : 200, 'pas de titre non débloqué');
+assert.equal((await equip(frank, 'nope')).status, 400);
+assert.equal((await equip({ ...frank, secret: '9'.repeat(32) }, 'rookie')).status, 403);
+r = await equip(frank, 'rookie');
+assert.deepEqual([r.status, r.body.title], [200, 'rookie']);
+r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
+assert.equal(r.body.entries.find(e => e.name === 'Frank').title, 'rookie', 'titre affiché au classement');
+r = await call(profile, { url: '/api/profile?name=Frank' });
+assert.equal(r.body.title, 'rookie');
+assert.ok(r.body.achievements.includes('rookie'));
+r = await equip(frank, '');
+assert.equal(r.body.title, null);
+assert.equal((await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Frank').title, null);
+
+// Ancien joueur sans stats : reconstruites une fois depuis son historique (tirages et badges différents).
+db.delete(`stats:${alice.playerId}`);
+db.delete(`badges:${alice.playerId}`);
+const aliceAll = (await call(history, { method: 'POST', body: aliceTab })).body.rolls;
+r = await call(profile, { url: '/api/profile?name=Alice' });
+const rebuilt = run([['HGETALL', `stats:${alice.playerId}`], ['SCARD', `badges:${alice.playerId}`]]);
+const st = Object.fromEntries(rebuilt[0].result.reduce((acc, v, i, arr) => (i % 2 ? acc : [...acc, [v, arr[i + 1]]]), []));
+assert.equal(Number(st.rolls), r.body.rolls, 'tirages recomptés');
+assert.equal(rebuilt[1].result, new Set(aliceAll.flatMap(([n]) => engine.analyze(n).earnedIds)).size, 'badges différents recomptés');
+assert.equal(Number(st.duelWins || 0) >= 0, true);
+assert.ok(r.body.achievements.includes('rookie') && r.body.achievements.includes('regular') === (r.body.rolls >= 100));
 
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

@@ -26,12 +26,13 @@ module.exports = async (req, res) => {
     const meOutsideTop = me && myRank !== null && Number(myRank) >= LIMIT;
     const wanted = meOutsideTop ? [...ids, me] : ids;
 
-    let details = [], names = [], counts = [];
+    let details = [], names = [], counts = [], titles = [];
     if (wanted.length) {
-      [details, names, counts] = await redis([
+      [details, names, counts, titles] = await redis([
         ['HMGET', scope.best, ...wanted],
         ['HMGET', 'names', ...wanted],
         ['HMGET', scope.count, ...wanted],
+        ['HMGET', 'titles', ...wanted],
       ]);
     }
 
@@ -40,7 +41,7 @@ module.exports = async (req, res) => {
     const toEntry = (id, i, rank) => {
       if (!details[i]) return null;
       const d = JSON.parse(details[i]);
-      return { rank, name: names[i] || 'Player', n: d.n, s: d.s, t: d.t, rolls: Number(counts[i] || 0), me: id === me };
+      return { rank, name: names[i] || 'Player', title: titles[i] || null, n: d.n, s: d.s, t: d.t, rolls: Number(counts[i] || 0), me: id === me };
     };
     const entries = ids.map((id, i) => toEntry(id, i, i + 1)).filter(Boolean);
     const mine = meOutsideTop ? toEntry(me, ids.length, Number(myRank) + 1) : null;
