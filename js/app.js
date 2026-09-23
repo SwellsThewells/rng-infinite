@@ -128,12 +128,16 @@
   const fullDate = t => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
   let toastTimer = 0;
-  function toast(msg, ms = 2600) {
+  function toast(msg, ms = 2600, kind = '') {
     const el = $('#toast');
     el.textContent = msg;
+    el.className = `toast${kind ? ` ${kind}` : ''}`;
     el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => { el.hidden = true; }, ms);
+    toastTimer = setTimeout(() => {
+      el.classList.add('out'); // sort en glissant, puis disparaît
+      toastTimer = setTimeout(() => { el.hidden = true; }, reducedMotion ? 0 : 220);
+    }, ms);
   }
 
   // ---------------------------------------------------------------- succès et titres
@@ -240,7 +244,7 @@
     if (!fresh.length) return;
     toast(fresh.length === 1
       ? `🏆 Achievement unlocked: ${fresh[0].emoji} ${fresh[0].title}. Equip its title from your profile`
-      : `🏆 ${fresh.length} achievements unlocked: ${fresh.map(a => `${a.emoji} ${a.title}`).join(', ')}`, 6000);
+      : `🏆 ${fresh.length} achievements unlocked: ${fresh.map(a => `${a.emoji} ${a.title}`).join(', ')}`, 6000, 'achv');
   }
 
   // Analyses mises en cache : un nombre donne toujours le même résultat.
@@ -473,6 +477,7 @@
     addEventListener('resize', resize);
     resize();
     const CONF = {
+      rare: { count: 26, speed: 5, colors: ['#60a5fa', '#bfdbfe', '#3b82f6', '#ffffff'], sparks: true },
       epic: { count: 60, speed: 7, colors: ['#a855f7', '#d8b4fe', '#7c3aed', '#f0abfc'] },
       anomaly: { count: 120, speed: 9, colors: ['#f97316', '#fdba74', '#fbbf24', '#ea580c'] },
       mythic: { count: 240, speed: 12, colors: ['#ec4899', '#a855f7', '#22d3ee', '#f43f5e', '#fde047'] },
@@ -487,13 +492,20 @@
         p.vy *= 0.985;
         p.x += p.vx;
         p.y += p.vy;
+        p.x += Math.sin((p.life + p.phase) * 0.12) * p.sway;
         p.rot += p.vr;
+        p.flip += p.vf;
         ctx.save();
         ctx.globalAlpha = Math.max(0, 1 - p.life / p.max);
         ctx.translate(p.x, p.y);
         ctx.rotate(p.rot);
+        ctx.scale(Math.cos(p.flip), 1); // le confetti se retourne comme un morceau de papier
         ctx.fillStyle = p.color;
-        ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
+        if (p.round) {
+          ctx.beginPath();
+          ctx.arc(0, 0, p.w / 2, 0, Math.PI * 2);
+          ctx.fill();
+        } else ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h);
         ctx.restore();
       }
       raf = parts.length ? requestAnimationFrame(tick) : 0;
@@ -506,10 +518,13 @@
       for (let i = 0; i < c.count; i++) {
         const ang = Math.random() * Math.PI * 2;
         const sp = c.speed * (0.35 + Math.random());
+        const spark = c.sparks || Math.random() < 0.18;
         parts.push({
           x, y, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - c.speed * 0.35,
-          w: 4 + Math.random() * 5, h: 6 + Math.random() * 8, rot: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3,
-          color: c.colors[i % c.colors.length], life: 0, max: 70 + Math.random() * 60,
+          w: spark ? 2.5 + Math.random() * 3 : 4 + Math.random() * 5, h: 6 + Math.random() * 8, round: spark,
+          rot: Math.random() * 6, vr: (Math.random() - 0.5) * 0.3, flip: Math.random() * 6, vf: 0.08 + Math.random() * 0.18,
+          sway: spark ? 0 : 0.4 + Math.random() * 0.8, phase: Math.random() * 60,
+          color: c.colors[i % c.colors.length], life: 0, max: (spark ? 45 : 70) + Math.random() * 60,
         });
       }
       if (tier === 'mythic') {
@@ -530,6 +545,30 @@
     }
     return { celebrate, clear };
   })();
+
+  // Relance une animation CSS portée par une classe (même si elle vient de jouer).
+  function replay(el, cls) {
+    if (!el || reducedMotion) return;
+    el.classList.remove(cls);
+    void el.offsetWidth;
+    el.classList.add(cls);
+  }
+
+  // Onde de choc à la couleur de la rareté, qui part de la carte au moment où la rareté se révèle.
+  const TIER_RING = { uncommon: '#10b981', rare: '#3b82f6', epic: '#a855f7', anomaly: '#f97316', mythic: '#ec4899' };
+  function shockwave(el, tier) {
+    const color = TIER_RING[tier];
+    if (!color || reducedMotion || !el) return;
+    const r = el.getBoundingClientRect();
+    const rings = TIER_RANK[tier] >= TIER_RANK.epic ? 2 : 1;
+    for (let k = 0; k < rings; k++) {
+      const w = document.createElement('div');
+      w.className = 'shockwave';
+      Object.assign(w.style, { left: `${r.left + r.width / 2}px`, top: `${r.top + r.height / 2}px`, width: `${r.width}px`, height: `${r.height}px`, borderColor: color, color, animationDelay: `${k * 140}ms` });
+      document.body.appendChild(w);
+      setTimeout(() => w.remove(), 1100 + k * 140);
+    }
+  }
 
   // Un nouveau countUp sur le même élément annule le précédent.
   function countUp(el, from, to, duration, format) {
@@ -1096,9 +1135,10 @@
       <div class="vignette" id="r-vignette"></div>
       <div class="page">
         <section class="result" data-tier="${a.tier}">
+          <div class="card-stage" id="card-stage"><div class="rays" aria-hidden="true"></div>
           <div class="num-card lg neutral charging${skinClass(Store.settings.skin)}" id="num-card">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
-          </div>
+          </div></div>
           <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
           <div class="ep-big pending" id="r-ep">??? XP</div>
           <div class="lifetime invisible" id="r-life">
@@ -1144,6 +1184,7 @@
       el.classList.add('revealed');
       if (i < lead) el.classList.add('ghost');
       revealed = i + 1;
+      replay($('#card-stage'), 'thump'); // sur le conteneur : la carte garde ses propres animations (lueur, tremblement)
     };
     step(REVEAL.digitStart, revealDigit(0), 1);
     for (let i = 1; i < slotCount; i++) step(digitDelay(i - 1, slotCount), revealDigit(i), 1);
@@ -1178,7 +1219,10 @@
       if (!reducedMotion) card.classList.add(a.tier === 'anomaly' || a.tier === 'mythic' ? 'shake' : 'reveal-pulse');
       ep.classList.remove('pending');
       countUp(ep, 0, a.total, 0, v => `${fmt(v)} XP`);
+      replay(ep, 'glint');
       FX.celebrate(a.tier, card);
+      shockwave(card, a.tier);
+      if (TIER_RANK[a.tier] >= TIER_RANK.epic) $('#card-stage').classList.add('lit'); // rayons derrière la carte
       show($('#r-actions'), 'fade-in');
       $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
       show($('#r-hint'), 'fade-in');
@@ -2276,7 +2320,7 @@
         : `<span class="mono board-wins">${wins[i]} / ${d.target}</span><span class="panel-note">${compact(totals[i])} XP</span>`;
       const ready = d.status === 'playing' && p.ready && !Room.anim ? '<span class="ready-chip">ready</span>' : '';
       const who = p.bot ? `<span class="bot-name">🤖 ${esc(p.name)}</span>` : `<a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>`;
-      return `<div class="board-row${p.me ? ' me' : ''}"><span class="rank">${k + 1}</span>${who}${titleHTML(p.title)}${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
+      return `<div class="board-row${p.me ? ' me' : ''}" data-pi="${i}"><span class="rank">${k + 1}</span>${who}${titleHTML(p.title)}${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
     }).join(''));
 
     const finished = d.status === 'done' && Room.shown === d.rounds.length && !Room.anim;
@@ -2388,6 +2432,7 @@
           list[k].classList.add('revealed');
           if (k < slotCount - sides[j].a.str.length) list[k].classList.add('ghost');
         });
+        sides.forEach((x, j) => replay($(`#rs-${j}`), 'thump'));
         revealed = k + 1;
       });
     }
@@ -2406,11 +2451,14 @@
       if (r.winner !== null) {
         const side = $(`#rs-${r.winner}`);
         side.classList.add('won');
-        side.querySelector('.room-name').insertAdjacentText('afterbegin', '🏆 ');
+        side.querySelector('.room-name').insertAdjacentHTML('afterbegin', '<span class="trophy-drop">🏆</span> ');
+        shockwave(cards[r.winner], sides[r.winner].a.tier === 'common' || sides[r.winner].a.tier === 'trash' ? 'uncommon' : sides[r.winner].a.tier);
+        d.players.forEach((p, j) => { if (j !== r.winner) $(`#rs-${j}`).classList.add('lost'); });
       }
       Room.anim = null;
       Room.shown = i + 1;
       drawRoom();
+      if (r.winner !== null) replay($(`.board-row[data-pi="${r.winner}"]`), 'bump');
       if (Room.shown < Room.data.rounds.length) playRound(Room.shown);
     });
     Room.anim = { cancel() { timers.forEach(clearTimeout); clearInterval(spin); } };
