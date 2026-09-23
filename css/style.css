@@ -924,3 +924,51 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
   .react-btn { font-size: 1.1rem; padding: .3rem .45rem; }
 }
 @media (prefers-reduced-motion: reduce) { .react-bubble { animation-duration: 1.2s; } }
+
+/* onglet Duel : parties en cours, boutique */
+.live-row { display: flex; align-items: center; gap: .7rem; padding: .55rem 0; border-top: 1px solid var(--outline); }
+.live-row:first-child { border-top: 0; }
+.live-dot { width: .55rem; height: .55rem; border-radius: 50%; background: var(--outline-strong); flex: none; }
+.live-dot.on { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .25); animation: wait-pulse 1.4s ease-in-out infinite; }
+.live-info { display: flex; flex-direction: column; min-width: 0; flex: 1; font-size: .8rem; }
+.live-players { font-size: .68rem; color: var(--prose-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-row .btn, .live-row .btn-roll { flex: none; text-decoration: none; }
+.coins { font-weight: 700; font-size: .9rem; }
+.skin-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr)); gap: .7rem; margin-top: .6rem; }
+.skin-tile { display: flex; flex-direction: column; align-items: center; gap: .55rem; padding: .9rem .6rem .8rem; border: 1px solid var(--outline); border-radius: .7rem; background: var(--surface-dim); text-align: center; }
+.skin-tile.equipped { border-color: var(--ep-outline); box-shadow: 0 0 0 2px var(--ep-outline); }
+.skin-tile .num-card.md { font-size: 1.7rem; min-width: 0; }
+.skin-name { display: flex; flex-direction: column; font-size: .8rem; }
+.skin-name span { font-size: .68rem; color: var(--prose-3); }
+.skin-state { font-size: .7rem; font-weight: 700; color: var(--success); padding: .45rem 0; }
+.btn.disabled { opacity: .5; }
+.h2h { display: flex; align-items: baseline; gap: .7rem; flex-wrap: wrap; padding: .5rem .7rem; margin-bottom: .6rem; border-radius: .5rem; background: var(--surface-dim); font-size: .85rem; }
+.h2h b { font-size: 1.2rem; }
+.rival-row { display: flex; justify-content: space-between; padding: .35rem 0; border-top: 1px solid var(--outline); font-size: .8rem; }
+
+/* skins du nombre tiré : ils remplacent l'apparence de la carte et de ses chiffres (.slot) */
+.num-card.skin-neon { background: #0b0614; border-color: #ff4fd8; color: #fff; text-shadow: 0 0 4px #fff, 0 0 10px #ff4fd8, 0 0 22px #ff4fd8; box-shadow: 0 0 14px rgba(255, 79, 216, .55), inset 0 0 12px rgba(255, 79, 216, .3); }
+.num-card.skin-lcd { background: #9aa886; border: 3px solid #3d4636; border-radius: .4rem; color: #1f2a1b; box-shadow: inset 0 3px 7px rgba(0, 0, 0, .35); text-shadow: 2px 2px 0 rgba(0, 0, 0, .12); }
+.num-card.skin-pixel { background: #1d2b53; border: 4px solid #29adff; border-radius: 0; color: #ffec27; box-shadow: 4px 4px 0 #000; }
+.skin-pixel .slot { font-family: 'Press Start 2P', monospace; font-size: .6em; width: 1.05em; text-shadow: .12em .12em 0 #ff004d; }
+.num-card.skin-jersey { background: repeating-linear-gradient(90deg, #d7263d 0 14px, #b81d31 14px 28px); border-color: #fff; color: #fff; text-shadow: -2px -2px 0 #111, 2px -2px 0 #111, -2px 2px 0 #111, 2px 2px 0 #111, 0 4px 6px rgba(0, 0, 0, .4); }
+.skin-jersey .slot { font-family: 'Graduate', serif; font-weight: 400; width: .74em; }
+.num-card.skin-donut { background: #fde7ef; border-color: #f472b6; }
+.skin-donut .slot { font-size: .5em; width: 1.9em; height: 1.9em; margin: 0 .06em; display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: #7c2d12;
+  background: radial-gradient(circle, #fffaf5 0 33%, transparent 34%), radial-gradient(circle at 30% 24%, #60a5fa 0 5%, transparent 6%), radial-gradient(circle at 74% 30%, #facc15 0 5%, transparent 6%),
+    radial-gradient(circle at 72% 76%, #34d399 0 5%, transparent 6%), radial-gradient(circle at 24% 70%, #fff 0 5%, transparent 6%), radial-gradient(circle, #f472b6 0 62%, #c98a55 63% 100%); }
+.num-card.skin-dice { background: radial-gradient(ellipse at center, #15803d, #0f5132 75%); border-color: #92400e; }
+.skin-dice .slot { font-size: .58em; width: 1.5em; height: 1.5em; margin: 0 .08em; display: inline-flex; align-items: center; justify-content: center; border-radius: .28em; color: #111; background: linear-gradient(145deg, #fff, #e5e7eb); box-shadow: 0 .12em 0 #9ca3af, 0 .22em .3em rgba(0, 0, 0, .3); }
+.num-card.skin-gold { background: linear-gradient(135deg, #292524, #1c1917); border-color: #d4a017; box-shadow: 0 0 14px rgba(212, 160, 23, .4); }
+.skin-gold .slot { background: linear-gradient(180deg, #fff7ae, #f5c542 45%, #b8860b 55%, #ffe27a); -webkit-background-clip: text; background-clip: text; color: transparent; filter: drop-shadow(0 1px 0 #7a5a00); }
+.num-card.skin-fire { background: radial-gradient(ellipse at bottom, #7c2d12, #1c0a05 72%); border-color: #f97316; box-shadow: 0 0 18px rgba(249, 115, 22, .6); }
+.skin-fire .slot { background: linear-gradient(0deg, #ef4444, #f97316 40%, #facc15 75%, #fff7ae); background-size: 100% 200%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: fire-flicker 1.1s ease-in-out infinite alternate; }
+@keyframes fire-flicker { to { background-position: 0 100%; } }
+.num-card.skin-galaxy { background: radial-gradient(1px 1px at 18% 28%, #fff, transparent), radial-gradient(1px 1px at 72% 62%, #fff, transparent), radial-gradient(1.5px 1.5px at 42% 82%, #c4b5fd, transparent),
+    radial-gradient(1px 1px at 86% 18%, #fff, transparent), radial-gradient(1px 1px at 8% 76%, #e0e7ff, transparent), radial-gradient(ellipse at 30% 40%, #4c1d95, #0b0624 72%); border-color: #8b5cf6; color: #fff; text-shadow: 0 0 8px #a78bfa, 0 0 18px #7c3aed; }
+.num-card.skin-rainbow { background: #111; border-color: #a855f7; }
+.skin-rainbow .slot { background: linear-gradient(90deg, #ef4444, #f59e0b, #eab308, #22c55e, #3b82f6, #a855f7, #ef4444); background-size: 400% 100%; -webkit-background-clip: text; background-clip: text; color: transparent; animation: rainbow-slide 3s linear infinite; }
+@keyframes rainbow-slide { to { background-position: 400% 0; } }
+.skin-donut .slot.collapsed, .skin-dice .slot.collapsed, .skin-pixel .slot.collapsed { width: 0; height: 0; margin: 0; box-shadow: none; background: none; }
+@media (prefers-reduced-motion: reduce) { .skin-fire .slot, .skin-rainbow .slot { animation: none; } }
+@media (max-width: 560px) { .live-row { flex-wrap: wrap; } .skin-grid { grid-template-columns: 1fr 1fr; } .skin-tile .num-card.md { font-size: 1.15rem; } }

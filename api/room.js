@@ -8,6 +8,7 @@
 // Pendant la partie, les joueurs peuvent envoyer des réactions (emoji) que tout le monde voit en direct.
 //   POST /api/room { action: 'create' | 'join' | 'start' | 'ready' | 'react' | 'rematch', code?, size?, mode?, target?, emoji?, playerId, secret, name }
 //   GET  /api/room?code=<code>&me=<playerId>   (sondé toutes les ~1,5 s par les joueurs et les spectateurs)
+//   GET  /api/room?live=1                      → parties publiques en cours ("Live now"), à regarder ou rejoindre
 const crypto = require('node:crypto');
 const { engine, redis, cleanName, claimPlayer, claimName, recordRoll, readStats, statsKey, Achievements, cors, send } = require('./_lib');
 
@@ -27,6 +28,8 @@ const roomKey = code => `room:${code}`;
 const playersKey = code => `room:${code}:players`;
 const roundsKey = code => `room:${code}:rounds`;
 const reactsKey = code => `room:${code}:reacts`;
+const LIVE_KEY = 'rooms:live'; // parties publiques, score = dernière activité
+const LIVE_MS = 10 * 60000; // une partie sans activité depuis 10 min sort de la liste
 const isCode = code => /^[A-Z2-9]{5}$/.test(code);
 const isPlayerId = id => /^[0-9a-f]{16}$/.test(String(id || ''));
 const newCode = () => Array.from(crypto.randomBytes(5), b => ALPHABET[b % 32]).join('');
@@ -38,8 +41,11 @@ function rules(body) {
   const target = mode === 'xp'
     ? (XP_TARGETS.includes(Number(body.target)) ? Number(body.target) : XP_TARGETS[1])
     : Math.min(MAX_WINS, Math.max(1, Math.round(Number(body.target) || 3)));
-  return { size, mode, target };
+  return { size, mode, target, isPublic: body.public !== false };
 }
+
+// Une partie publique en cours reste dans "Live now" tant qu'elle bouge ; finie, elle en sort.
+const touchLive = (room, now = Date.now()) => (room.h.public === '1' ? [['ZADD', LIVE_KEY, now, room.code]] : []);
 
 // Une salle : son hash (règles, hôte, "ready:<id>" = manche pour laquelle le joueur est prêt, "first:<k>" = heure du
 // premier prêt), la liste ordonnée des joueurs { id, name, title }, les manches { t, revealAt, n: [un nombre par joueur] }
@@ -111,6 +117,7 @@ async function advance(room, now = Date.now()) {
     ...[roomKey(room.code), playersKey(room.code), roundsKey(room.code)].map(key => ['EXPIRE', key, TTL]),
     // Pas de tirage normal en parallèle pendant la manche.
     ...room.players.map(p => ['SET', `cooldown:${p.id}`, '1', 'PX', GAP_MS]),
+    ...touchLive(room, now),
   ]);
   await Promise.all(room.players.map((p, i) => recordRoll(p.id, round.n[i], round.t)));
   room.rounds.push(round);
@@ -123,7 +130,14 @@ async function recordDuel(room) {
   const sc = score(room);
   if (!sc.done) return;
   const writes = room.players.map(p => ['HINCRBY', statsKey(p.id), 'duels', 1]);
+  writes.push(['ZREM', LIVE_KEY, room.code]);
   if (sc.winner !== null) {
+    // Face-à-face : le gagnant bat chacun des autres (h2h:<id> → "w:<adversaire>" victoires, "l:<adversaire>" défaites).
+    const winnerId = room.players[sc.winner].id;
+    room.players.forEach((p, i) => {
+      if (i === sc.winner) return;
+      writes.push(['HINCRBY', `h2h:${winnerId}`, `w:${p.id}`, 1], ['HINCRBY', `h2h:${p.id}`, `l:${winnerId}`, 1]);
+    });
     const w = statsKey(room.players[sc.winner].id);
     writes.push(['HINCRBY', w, 'duelWins', 1]);
     const alone = sc.wins.every((v, i) => i === sc.winner || v === 0);
@@ -143,9 +157,9 @@ async function view(room, me) {
   const first = room.h[`first:${k}`];
   const last = room.rounds[k - 1];
   return {
-    code: room.code, status, size: room.size, mode: room.mode, target: room.target,
+    code: room.code, status, size: room.size, mode: room.mode, target: room.target, public: room.h.public === '1',
     players: room.players.map((p, i) => ({
-      name: p.name, title: p.title || null, me: p.id === me, host: p.id === room.host,
+      name: p.name, title: p.title || null, skin: p.skin || null, me: p.id === me, host: p.id === room.host,
       ready: status === 'playing' && readyFor(room, p.id) === k, wins: sc.wins[i], total: sc.totals[i],
     })),
     rounds: sc.list,
@@ -162,14 +176,37 @@ async function view(room, me) {
   };
 }
 
-// Titre équipé d'un joueur au moment où il entre dans la salle (affiché à côté de son nom).
-const titleOf = async id => (await redis([['HGET', 'titles', id]]))[0] || null;
+// Titre et skin équipés d'un joueur au moment où il entre dans la salle (affichés à côté de son nom et sur ses cartes).
+async function seat(id, name) {
+  const [title, skin] = await redis([['HGET', 'titles', id], ['HGET', 'skins', id]]);
+  return { id, name, title: title || null, skin: skin || null };
+}
+
+// "Live now" : les 10 parties publiques les plus récemment actives, sans identifiant.
+async function liveRooms(now = Date.now()) {
+  const [, codes] = await redis([['ZREMRANGEBYSCORE', LIVE_KEY, '-inf', now - LIVE_MS], ['ZREVRANGE', LIVE_KEY, 0, 9]]);
+  if (!codes || !codes.length) return [];
+  const out = await redis(codes.flatMap(code => [['HGETALL', roomKey(code)], ['LRANGE', playersKey(code), 0, -1], ['LLEN', roundsKey(code)]]));
+  return codes.map((code, i) => {
+    const h = {};
+    const flat = out[i * 3] || [];
+    for (let j = 0; j < flat.length; j += 2) h[flat[j]] = flat[j + 1];
+    const players = (out[i * 3 + 1] || []).map(p => JSON.parse(p));
+    if (!h.host || !players.length) return null;
+    return {
+      code, status: h.started === '1' ? 'playing' : 'lobby', size: Number(h.size), count: players.length,
+      mode: h.mode, target: Number(h.target), round: Number(out[i * 3 + 2] || 0),
+      host: (players.find(p => p.id === h.host) || players[0]).name, players: players.map(p => p.name),
+    };
+  }).filter(Boolean);
+}
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
   try {
     if (req.method === 'GET') {
       const params = new URL(req.url, 'http://localhost').searchParams;
+      if (params.get('live')) return send(res, 200, { rooms: await liveRooms() });
       const code = String(params.get('code') || '').toUpperCase();
       const me = isPlayerId(params.get('me')) ? params.get('me') : '';
       const room = isCode(code) ? await load(code) : null;
@@ -193,13 +230,14 @@ module.exports = async (req, res) => {
         const code = newCode();
         const [created] = await redis([['HSETNX', roomKey(code), 'host', playerId]]);
         if (Number(created) !== 1) continue;
-        const list = players || [{ id: playerId, name, title: await titleOf(playerId) }];
+        const list = players || [await seat(playerId, name)];
         await redis([
           ['HSET', roomKey(code), 'size', players ? list.length : r.size, 'mode', r.mode, 'target', r.target, 'created', Date.now(),
-            'count', list.length, 'started', players ? 1 : 0, ...list.flatMap(p => [`m:${p.id}`, 1])],
+            'count', list.length, 'started', players ? 1 : 0, 'public', r.isPublic ? 1 : 0, ...list.flatMap(p => [`m:${p.id}`, 1])],
           ['RPUSH', playersKey(code), ...list.map(p => JSON.stringify(p))],
           ['EXPIRE', roomKey(code), TTL],
           ['EXPIRE', playersKey(code), TTL],
+          ...(r.isPublic ? [['ZADD', LIVE_KEY, Date.now(), code]] : []),
         ]);
         return code;
       }
@@ -228,7 +266,7 @@ module.exports = async (req, res) => {
         await redis([['HINCRBY', roomKey(code), 'count', -1], ['HDEL', roomKey(code), `m:${playerId}`]]);
         return send(res, 422, { error: 'This duel is full' });
       }
-      const writes = [['RPUSH', playersKey(code), JSON.stringify({ id: playerId, name, title: await titleOf(playerId) })]];
+      const writes = [['RPUSH', playersKey(code), JSON.stringify(await seat(playerId, name))], ...touchLive(room)];
       if (Number(count) === room.size) writes.push(['HSET', roomKey(code), 'started', 1]); // complet : la partie commence
       await redis(writes);
       return send(res, 200, await view(await load(code), playerId));
@@ -239,7 +277,7 @@ module.exports = async (req, res) => {
       if (room.started) return send(res, 200, await view(room, playerId));
       if (room.players.length < MIN_PLAYERS) return send(res, 422, { error: 'Wait for at least one opponent' });
       // La partie se joue à ceux qui sont là ; la salle se ferme aux nouveaux venus.
-      await redis([['HSET', roomKey(code), 'started', 1, 'size', room.players.length]]);
+      await redis([['HSET', roomKey(code), 'started', 1, 'size', room.players.length], ...touchLive(room)]);
       return send(res, 200, await view(await load(code), playerId));
     }
 
@@ -272,7 +310,7 @@ module.exports = async (req, res) => {
       if (!score(room).done) return send(res, 422, { error: 'This duel is not over yet' });
       let next = room.h.next || null;
       if (!next) {
-        const code2 = await createRoom({ size: room.players.length, mode: room.mode, target: room.target }, room.players);
+        const code2 = await createRoom({ size: room.players.length, mode: room.mode, target: room.target, isPublic: room.h.public === '1' }, room.players);
         if (!code2) return send(res, 503, { error: 'Could not create a duel, try again' });
         const [won] = await redis([['HSETNX', roomKey(code), 'next', code2]]);
         if (Number(won) === 1) {

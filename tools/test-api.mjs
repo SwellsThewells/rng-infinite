@@ -422,8 +422,9 @@ r = await equip(frank, '');
 assert.equal(r.body.title, null);
 assert.equal((await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Frank').title, null);
 
-// Ancien joueur sans stats : reconstruites une fois depuis son historique (tirages et badges différents).
-db.delete(`stats:${alice.playerId}`);
+// Ancien joueur (stats jamais reconstruites) : recomptées une fois depuis l'historique, sans toucher aux duels.
+const duelFields = run([['HMGET', `stats:${alice.playerId}`, 'duels', 'duelWins']])[0].result;
+run([['HDEL', `stats:${alice.playerId}`, 'v'], ['HSET', `stats:${alice.playerId}`, 'rolls', 999999]]);
 db.delete(`badges:${alice.playerId}`);
 const aliceAll = (await call(history, { method: 'POST', body: aliceTab })).body.rolls;
 r = await call(profile, { url: '/api/profile?name=Alice' });
@@ -431,7 +432,7 @@ const rebuilt = run([['HGETALL', `stats:${alice.playerId}`], ['SCARD', `badges:$
 const st = Object.fromEntries(rebuilt[0].result.reduce((acc, v, i, arr) => (i % 2 ? acc : [...acc, [v, arr[i + 1]]]), []));
 assert.equal(Number(st.rolls), r.body.rolls, 'tirages recomptés');
 assert.equal(rebuilt[1].result, new Set(aliceAll.flatMap(([n]) => engine.analyze(n).earnedIds)).size, 'badges différents recomptés');
-assert.equal(Number(st.duelWins || 0) >= 0, true);
+assert.deepEqual([st.duels ?? null, st.duelWins ?? null], duelFields, 'les compteurs de duel survivent à la reconstruction');
 assert.ok(r.body.achievements.includes('rookie') && r.body.achievements.includes('regular') === (r.body.rolls >= 100));
 
 // 14. Titre Owner : seulement pour le compte Google du créateur (e-mail vérifié), invisible pour les autres.
@@ -449,5 +450,55 @@ assert.deepEqual([r.status, r.body.title], [200, 'owner']);
 assert.equal((await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Boss').title, 'owner');
 assert.equal((await equip(frank, 'owner')).status, 422, 'personne d\'autre');
 assert.ok(!(await call(profile, { url: '/api/profile?name=Frank' })).body.achievements.includes('owner'));
+
+// 15. Pièces et skins : gagnées en tirant (selon la rareté) et en duel, dépensées une seule fois, visibles en duel.
+const shopApi = require(path.join(ROOT, 'api/shop.js'));
+const Shop = require(path.join(ROOT, 'js/shop.js'));
+const shop = (who, action, skin) => call(shopApi, { method: 'POST', body: { playerId: who.playerId, secret: who.secret, action, skin } });
+r = await call(shopApi, { url: `/api/shop?me=${frank.playerId}` });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+assert.ok(r.body.coins >= 1 && r.body.coins <= 100, 'des pièces pour son tirage');
+assert.deepEqual([r.body.owned, r.body.skin], [['classic'], 'classic']);
+const coins0 = r.body.coins;
+assert.equal((await shop(frank, 'buy', 'neon')).status, 422, 'pas assez de pièces');
+assert.equal((await shop(frank, 'equip', 'gold')).status, 422, 'pas encore acheté');
+assert.equal((await shop(frank, 'buy', 'licorne')).status, 400);
+assert.equal((await shop({ ...frank, secret: '9'.repeat(32) }, 'buy', 'neon')).status, 403);
+run([['HINCRBY', `stats:${frank.playerId}`, 't:mythic', 5]]); // 5 Mythics de plus : +500 pièces
+r = await shop(frank, 'buy', 'neon');
+assert.equal(r.status, 200, JSON.stringify(r.body));
+assert.deepEqual([r.body.coins, r.body.skin, r.body.owned.includes('neon')], [coins0 + 500 - 200, 'neon', true]);
+assert.equal((await shop(frank, 'buy', 'neon')).body.coins, coins0 + 300, 'racheter ne débite pas deux fois');
+assert.equal((await shop(frank, 'equip', 'classic')).body.skin, 'classic');
+assert.equal((await shop(frank, 'equip', 'neon')).body.skin, 'neon');
+r = await roomPost(frank, 'create', { size: 2, public: false });
+assert.equal(r.body.players[0].skin, 'neon', 'le skin se voit en duel');
+const privateRoom = r.body.code;
+assert.equal(r.body.public, false);
+
+// 16. « Live now » : les parties publiques actives, pas les privées ni les finies.
+r = await roomPost(dave, 'create', { size: 3 });
+const openRoom = r.body.code;
+assert.equal(r.body.public, true, 'publique par défaut');
+r = await call(roomApi, { url: '/api/room?live=1' });
+const liveCodes = r.body.rooms.map(x => x.code);
+assert.ok(liveCodes.includes(openRoom), 'partie publique listée');
+assert.ok(!liveCodes.includes(privateRoom), 'partie privée cachée');
+assert.ok(!liveCodes.includes(race) && !liveCodes.includes(code), 'parties finies retirées');
+const listed = r.body.rooms.find(x => x.code === openRoom);
+assert.deepEqual([listed.status, listed.count, listed.size, listed.host], ['lobby', 1, 3, 'Dave']);
+assert.ok(!JSON.stringify(r.body).includes(dave.playerId), 'aucun id');
+
+// 17. Rivalités : chaque partie finie compte dans le face-à-face gagnant/perdants.
+const raceWinner = state.winner === 0 ? alice : dave, raceLoser = state.winner === 0 ? dave : alice;
+if (state.winner !== null) {
+  const winnerName = state.players[state.winner].name, loserName = state.players[1 - state.winner].name;
+  r = await call(profile, { url: `/api/profile?name=${winnerName}&me=${raceLoser.playerId}` });
+  assert.ok(r.body.duels.won >= 1 && r.body.duels.played >= r.body.duels.won);
+  assert.ok(r.body.duels.vsMe.w >= 1, 'vu du gagnant : au moins une victoire contre moi');
+  r = await call(profile, { url: `/api/profile?name=${loserName}` });
+  assert.ok(r.body.duels.rivals.some(x => x.name === winnerName && x.l >= 1), 'le perdant a le gagnant dans ses rivaux');
+  assert.equal(r.body.duels.vsMe, null, 'sans me, pas de face-à-face');
+}
 
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

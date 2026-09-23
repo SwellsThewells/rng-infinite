@@ -49,6 +49,7 @@ export function fakeRedis() {
       for (const m of members) if (!s.has(m)) { s.add(m); added++; }
       return added;
     },
+    SMEMBERS: k => (db.has(k) ? [...db.get(k)] : []),
     SCARD: k => (db.has(k) ? db.get(k).size : 0),
     SISMEMBER: (k, m) => (db.has(k) && db.get(k).has(m) ? 1 : 0),
     ZADD(k, ...pairs) {
@@ -86,6 +87,13 @@ export function fakeRedis() {
       const [s, e] = range(l.length, a, b);
       return l.slice(s, e + 1);
     },
+    ZREMRANGEBYSCORE(k, min, max) {
+      const lo = min === '-inf' ? -Infinity : Number(min), hi = max === '+inf' ? Infinity : Number(max);
+      const removed = asc(k).filter(([, score]) => score >= lo && score <= hi);
+      removed.forEach(([m]) => zset(k).delete(m));
+      return removed.length;
+    },
+    ZREM: (k, ...members) => members.filter(m => db.has(k) && db.get(k).delete(m)).length,
     ZREVRANK: (k, m) => { const i = asc(k).reverse().findIndex(([id]) => id === m); return i < 0 ? null : i; },
     ZREMRANGEBYRANK(k, a, b) {
       const all = asc(k);

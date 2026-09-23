@@ -1,4 +1,4 @@
-// GET /api/profile?name=<nom>
+// GET /api/profile?name=<nom>&me=<playerId>   (me : facultatif, pour le face-à-face avec celui qui regarde)
 // Profil public d'un joueur, ouvert depuis le classement : ses meilleurs tirages et sa collection de badges.
 // Calculé à partir de son historique (hist:<id>), comme ses propres pages History et Badges ; le classement,
 // lui, ne compte que les tirages faits par le serveur. Ni l'identifiant ni la liste complète des tirages ne sortent d'ici.
@@ -10,19 +10,40 @@ module.exports = async (req, res) => {
   if (cors(req, res)) return;
   if (req.method !== 'GET') return send(res, 405, { error: 'Use GET' });
   try {
-    const name = cleanName(new URL(req.url, 'http://localhost').searchParams.get('name'));
+    const params = new URL(req.url, 'http://localhost').searchParams;
+    const name = cleanName(params.get('name'));
+    const me = /^[0-9a-f]{16}$/.test(params.get('me') || '') ? params.get('me') : '';
     if (!name) return send(res, 400, { error: 'Missing player name' });
     const id = await findPlayer(name);
     if (!id) return send(res, 404, { error: 'No player with this name' });
 
-    const [members, shownName, bestAll, rank, title] = await redis([
+    const [members, shownName, bestAll, rank, title, h2hFlat] = await redis([
       ['ZRANGE', historyKey(id), 0, -1],
       ['HGET', 'names', id],
       ['HGET', 'best:all', id],
       ['ZREVRANK', 'lb:all', id],
       ['HGET', 'titles', id],
+      ['HGETALL', `h2h:${id}`],
     ]);
-    const achievements = Achievements.unlocked(await readStats(id));
+    const stats = await readStats(id);
+    const achievements = Achievements.unlocked(stats);
+
+    // Duels : bilan, rivaux les plus affrontés (face-à-face) et bilan contre celui qui regarde.
+    const h2h = new Map();
+    for (let i = 0; i < (h2hFlat || []).length; i += 2) {
+      const [kind, other] = [h2hFlat[i].slice(0, 1), h2hFlat[i].slice(2)];
+      const e = h2h.get(other) || { w: 0, l: 0 };
+      e[kind === 'w' ? 'w' : 'l'] += Number(h2hFlat[i + 1]);
+      h2h.set(other, e);
+    }
+    const rivalIds = [...h2h.keys()].filter(o => o !== me).sort((a, b) => (h2h.get(b).w + h2h.get(b).l) - (h2h.get(a).w + h2h.get(a).l)).slice(0, 5);
+    const [rivalNames] = rivalIds.length ? await redis([['HMGET', 'names', ...rivalIds]]) : [[]];
+    const duels = {
+      played: Number(stats.duels || 0),
+      won: Number(stats.duelWins || 0),
+      rivals: rivalIds.map((o, i) => ({ name: rivalNames[i] || 'Player', ...h2h.get(o) })),
+      vsMe: me && me !== id ? h2h.get(me) || { w: 0, l: 0 } : null, // vu de ce joueur : w = ses victoires contre moi
+    };
 
     // Historique trié par date ; le meilleur tirage all-time y est ajouté s'il date d'avant l'historique serveur.
     // Comparé par nombre seul : un vieux tirage envoyé par l'appareil porte l'heure de l'appareil, pas celle du serveur.
@@ -68,6 +89,7 @@ module.exports = async (req, res) => {
       badges,
       achievements, // succès débloqués (stats du serveur) et titre équipé
       title: title || null,
+      duels,
     });
   } catch (err) {
     return send(res, err.status || 500, { error: err.message });

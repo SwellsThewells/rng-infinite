@@ -20,7 +20,7 @@ globalThis.fetch = (url, opts) => (url === 'http://fake-redis.local/pipeline'
   ? Promise.resolve({ ok: true, json: async () => memory.run(JSON.parse(opts.body)) })
   : realFetch(url, opts));
 
-const API = Object.fromEntries(['roll', 'leaderboard', 'auth', 'history', 'name', 'profile', 'room', 'title'].map(name => [name, require(path.join(ROOT, `api/${name}.js`))]));
+const API = Object.fromEntries(['roll', 'leaderboard', 'auth', 'history', 'name', 'profile', 'room', 'title', 'shop'].map(name => [name, require(path.join(ROOT, `api/${name}.js`))]));
 const TYPES = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png' };
 
 http.createServer(async (req, res) => {

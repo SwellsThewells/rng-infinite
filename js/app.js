@@ -62,7 +62,17 @@
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
     },
     profile(name) {
-      return this.request(`/api/profile?name=${encodeURIComponent(name)}`);
+      return this.request(`/api/profile?name=${encodeURIComponent(name)}&me=${Store.player.id}`);
+    },
+    shop() {
+      return this.request(`/api/shop?me=${Store.player.id}`);
+    },
+    shopAction(action, skin) {
+      const p = Store.player;
+      return this.request('/api/shop', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, action, skin }) });
+    },
+    liveRooms() {
+      return this.request('/api/room?live=1');
     },
     claimName(name) {
       const p = Store.player;
@@ -130,6 +140,9 @@
   // Le serveur renvoie la liste des succès débloqués (après un tirage, sur le profil, en fin de duel) ;
   // on annonce ceux que cet appareil n'a pas encore vus. Le titre d'un succès s'équipe depuis son profil.
   const Ach = window.RNGAchievements;
+  const Shop = window.RNGShop;
+  const skinClass = id => (id && id !== 'classic' && Shop.byId.has(id) ? ` skin-${id}` : '');
+  const slotsHTML = str => str.split('').map(c => `<span class="slot">${c}</span>`).join('');
   const titleHTML = id => {
     const a = id && Ach.byId.get(id);
     if (!a) return '';
@@ -999,7 +1012,7 @@
       <div class="vignette" id="r-vignette"></div>
       <div class="page">
         <section class="result" data-tier="${a.tier}">
-          <div class="num-card lg neutral charging" id="num-card">
+          <div class="num-card lg neutral charging${skinClass(Store.settings.skin)}" id="num-card">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
           </div>
           <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
@@ -1553,6 +1566,7 @@
         ${tile('Badges', `${found}/${total}`, `${((found / total) * 100).toFixed(0)}% of the collection`)}
       </div>
       ${!me && mine ? compareHTML(mine, p) : ''}
+      ${duelsPanelHTML(p, me)}
       <div class="panel">
         <div class="panel-head"><h3 class="panel-title">Achievements</h3><span class="panel-note">${achDone} / ${achTotal} unlocked${me ? ' · equip one: its title shows next to your name on the leaderboard' : ''}</span></div>
         <div class="ach-grid">${achList.map(a => {
@@ -1600,6 +1614,27 @@
     }
   }
 
+  // Duels d'un joueur : bilan, face-à-face avec moi, rivaux les plus affrontés.
+  function duelsPanelHTML(p, me) {
+    const d = p.duels;
+    if (!d || (!d.played && !(d.rivals || []).length)) return '';
+    const rate = d.played ? ` · ${Math.round((d.won / d.played) * 100)}% win rate` : '';
+    const vs = !me && d.vsMe ? `
+      <div class="h2h">
+        <span>You vs ${esc(p.name)}</span>
+        <b class="mono">${d.vsMe.l} – ${d.vsMe.w}</b>
+        <span class="panel-note">${d.vsMe.l > d.vsMe.w ? 'you lead' : d.vsMe.l < d.vsMe.w ? `${esc(p.name)} leads` : d.vsMe.l ? 'tied' : 'no duel between you yet'}</span>
+      </div>` : '';
+    const rivals = (d.rivals || []).map(r => `
+      <div class="rival-row"><a class="player-link" href="${profileHref(r.name)}">${esc(r.name)}</a><span class="mono">${r.w} – ${r.l}</span></div>`).join('');
+    return `
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title">Duels</h3><span class="panel-note">${fmt(d.won)} won / ${fmt(d.played)} played${rate}</span></div>
+        ${vs}
+        ${rivals ? `<div class="eyebrow" style="margin:.4rem 0 .3rem">Rivals (${me ? 'your' : 'their'} wins – losses)</div>${rivals}` : ''}
+      </div>`;
+  }
+
   // Comparaison complète avec un autre joueur (deux profils calculés par le serveur) :
   // chaque ligne met en valeur le meilleur des deux, puis le score, les meilleurs tirages et les badges de chacun.
   function compareHTML(mine, theirs) {
@@ -1619,6 +1654,8 @@
       ['All-time rank', p => p.rank || Infinity, v => (v === Infinity ? '–' : '#' + v), -1],
       ['Luck (avg percentile)', p => (p.luck == null ? -1 : p.luck), v => (v < 0 ? '–' : v.toFixed(1)), 1],
       ...['mythic', 'anomaly', 'epic', 'rare'].map(t => [`${cap(t)} rolls`, p => (p.tiers && p.tiers[t]) || 0, v => fmt(v), 1]),
+      ['Duels won', p => (p.duels ? p.duels.won : 0), v => fmt(v), 1],
+      ['Duel win rate', p => (p.duels && p.duels.played ? p.duels.won / p.duels.played : -1), v => (v < 0 ? '–' : `${Math.round(v * 100)}%`), 1],
       ['Badges found', found, v => `${v}/${Engine.badges.length}`, 1],
       ['Rarest badge', p => (rarest(p) ? rarest(p).score : 0), (v, p) => rarestCell(p), 1],
       ['Playing since', p => p.since || 0, v => (v ? day(v) : '–'), 0],
@@ -1692,29 +1729,41 @@
       mode: d.mode === 'xp' ? 'xp' : 'rounds',
       wins: Math.min(10, Math.max(1, Number(d.wins) || 3)),
       xp: XP_TARGETS.includes(Number(d.xp)) ? Number(d.xp) : 50000,
+      isPublic: d.isPublic !== false,
     };
   }
 
+  // Onglet Duel : parties publiques en cours, créer ou rejoindre une partie, boutique de skins.
+  let hubTimer = 0;
   function renderDuelHub() {
     currentView = 'duel';
     app.innerHTML = `
-      <div class="page">
+      <div class="page page-wide">
         <h1 class="page-title">Duel</h1>
         <p class="panel-note profile-sub">Everyone rolls at the same time and all numbers are revealed together, digit by digit. Duel rolls are normal rolls: they stay in your history and count on the leaderboard.</p>
-        <div class="grid-2">
+        <div class="panel">
+          <div class="panel-head"><h3 class="panel-title">Live now</h3><span class="panel-note">public games · watch or join without a code</span></div>
+          <div id="d-live"><div class="empty">Loading…</div></div>
+        </div>
+        <div class="grid-2 stats-sep">
           <div class="panel">
             <div class="panel-head"><h3 class="panel-title">Create a game</h3></div>
             <div id="d-setup"></div>
             <button class="btn-roll small" id="d-create">⚔️ Create the game</button>
           </div>
           <div class="panel">
-            <div class="panel-head"><h3 class="panel-title">Join a game</h3></div>
+            <div class="panel-head"><h3 class="panel-title">Join with a code</h3></div>
             <form class="duel-join" id="d-join">
               <input class="input mono" id="d-code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Duel code">
               <button class="btn" type="submit">Join</button>
             </form>
             <p class="panel-note">Ask the host for the 5-character code, or open the link they share.</p>
           </div>
+        </div>
+        <div class="panel">
+          <div class="panel-head"><h3 class="panel-title">Skins</h3><span class="coins mono" id="d-coins"></span></div>
+          <p class="panel-note" style="margin-top:-.3rem">Change how your number looks, on your rolls and on your cards in duels. Earn coins by rolling (Common 1, Rare 5, Epic 10, Anomaly 25, Mythic 100) and by winning duels (+25).</p>
+          <div class="skin-grid" id="d-skins"></div>
         </div>
       </div>`;
     const drawSetup = () => {
@@ -1726,18 +1775,102 @@
         ${p.mode === 'xp'
           ? `<div class="field"><label>First to reach (XP)</label>${seg('xp', XP_TARGETS, p.xp, v => compact(v))}</div>`
           : `<div class="field"><label>Round wins needed</label>${seg('wins', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], p.wins)}</div>`}
-        <p class="panel-note">${p.size} players · ${goalText({ mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins })} · each round goes to the highest roll</p>`;
+        <div class="field"><label>Visibility</label>${seg('isPublic', ['true', 'false'], String(p.isPublic), v => (v === 'true' ? 'Public' : 'Private'))}</div>
+        <p class="panel-note">${p.size} players · ${goalText({ mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins })} · ${p.isPublic ? 'listed in Live now' : 'code only'}</p>`;
     };
     drawSetup();
     $('#d-setup').addEventListener('click', e => {
       const btn = e.target.closest('[data-pref] button');
       if (!btn) return;
       const key = btn.parentElement.dataset.pref;
-      Store.setSetting('duel', { ...duelPrefs(), [key]: key === 'mode' ? btn.dataset.v : Number(btn.dataset.v) });
+      const value = key === 'mode' ? btn.dataset.v : key === 'isPublic' ? btn.dataset.v === 'true' : Number(btn.dataset.v);
+      Store.setSetting('duel', { ...duelPrefs(), [key]: value });
       drawSetup();
     });
     $('#d-create').addEventListener('click', createRoom);
     $('#d-join').addEventListener('submit', e => { e.preventDefault(); joinRoom($('#d-code').value); });
+    drawLive();
+    drawShop();
+  }
+
+  // "Live now", rafraîchi toutes les 10 s tant que l'onglet est visible.
+  async function drawLive() {
+    clearTimeout(hubTimer);
+    let rooms;
+    try {
+      rooms = (await Online.liveRooms()).rooms;
+    } catch (err) {
+      if ($('#d-live')) $('#d-live').innerHTML = '<div class="empty">Live games unavailable right now.</div>';
+      return;
+    }
+    const box = $('#d-live');
+    if (currentView !== 'duel' || !box) return;
+    const changed = setHTML(box, rooms.length ? rooms.map(r => {
+      const mine = Store.player.name && r.players.includes(Store.player.name);
+      const action = mine ? `<a class="btn" href="${roomHref(r.code)}">Back to it</a>`
+        : r.status === 'lobby' && r.count < r.size ? `<button class="btn-roll small" data-join="${r.code}">Join</button>`
+        : `<a class="btn" href="${roomHref(r.code)}">Watch</a>`;
+      return `
+        <div class="live-row">
+          <span class="live-dot${r.status === 'playing' ? ' on' : ''}"></span>
+          <span class="live-info"><b>${esc(r.host)}'s game</b>
+            <span class="panel-note">${r.count}/${r.size} players · ${goalText(r)} · ${r.status === 'lobby' ? 'waiting for players' : `round ${r.round + 1}`}</span>
+            <span class="live-players">${r.players.map(esc).join(', ')}</span></span>
+          ${action}
+        </div>`;
+    }).join('') : '<div class="empty">No public game right now. Create one!</div>');
+    // Écouteurs posés seulement quand la liste a changé : sinon chaque rafraîchissement en ajouterait un de plus.
+    if (changed) box.querySelectorAll('[data-join]').forEach(b => b.addEventListener('click', () => joinRoom(b.dataset.join)));
+    if (!document.hidden) hubTimer = setTimeout(() => { if (currentView === 'duel') drawLive(); }, 10000);
+  }
+
+  // Boutique : pièces, skins possédés et équipé ; acheter = équiper.
+  async function drawShop(state) {
+    const grid = $('#d-skins');
+    if (!grid) return;
+    if (!state) {
+      if (!Store.player.name) {
+        grid.innerHTML = '<div class="empty">Roll once to start earning coins.</div>';
+        return;
+      }
+      try {
+        state = await Online.shop();
+      } catch (err) {
+        grid.innerHTML = '<div class="empty">Shop unavailable right now.</div>';
+        return;
+      }
+      if (currentView !== 'duel' || !$('#d-skins')) return;
+    }
+    Store.setSetting('skin', state.skin);
+    $('#d-coins').textContent = `🪙 ${fmt(state.coins)}`;
+    grid.innerHTML = Shop.SKINS.map(k => {
+      const owned = state.owned.includes(k.id), equipped = state.skin === k.id;
+      const button = equipped ? '<span class="skin-state">Equipped</span>'
+        : owned ? `<button class="btn" data-skin-equip="${k.id}">Equip</button>`
+        : `<button class="btn${state.coins >= k.price ? '' : ' disabled'}" data-skin-buy="${k.id}">🪙 ${fmt(k.price)}</button>`;
+      return `
+        <div class="skin-tile${equipped ? ' equipped' : ''}">
+          <div class="num-card md${skinClass(k.id)}" data-tier="rare">${slotsHTML('235711')}</div>
+          <div class="skin-name"><b>${k.emoji} ${esc(k.name)}</b><span>${esc(k.desc)}</span></div>
+          ${button}
+        </div>`;
+    }).join('');
+    grid.onclick = async e => {
+      const buy = e.target.closest('[data-skin-buy]'), equip = e.target.closest('[data-skin-equip]');
+      const btn = buy || equip;
+      if (!btn || btn.disabled) return;
+      const skin = Shop.byId.get(btn.dataset.skinBuy || btn.dataset.skinEquip);
+      if (buy && state.coins < skin.price) { toast(`${fmt(skin.price - state.coins)} more coins needed for ${skin.name}`); return; }
+      btn.disabled = true;
+      try {
+        const next = await Online.shopAction(buy ? 'buy' : 'equip', skin.id);
+        toast(buy ? `${skin.emoji} ${skin.name} unlocked and equipped` : `${skin.emoji} ${skin.name} equipped`);
+        drawShop(next);
+      } catch (err) {
+        btn.disabled = false;
+        toast(err.status === 422 ? err.message : 'Shop unavailable right now, try again');
+      }
+    };
   }
 
   function roomError(err, retry) {
@@ -1749,7 +1882,7 @@
     if (!Store.player.name) { askName(createRoom); return; }
     const p = duelPrefs();
     try {
-      const d = await Online.roomAction('create', null, { size: p.size, mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins });
+      const d = await Online.roomAction('create', null, { size: p.size, mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins, public: p.isPublic });
       location.hash = roomHref(d.code);
     } catch (err) {
       roomError(err, createRoom);
@@ -2043,8 +2176,8 @@
       const a = r && !spinning ? analysis(r.n[j]) : null;
       const won = a && r.winner === j;
       const card = a
-        ? `<div class="num-card md" data-tier="${a.tier}" data-number="${r.n[j]}" data-caption="${esc(p.name)}" style="cursor:pointer">${a.str}</div>`
-        : `<div class="num-card md neutral${spinning ? ' charging' : ''}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
+        ? `<div class="num-card md${skinClass(p.skin)}" data-tier="${a.tier}" data-number="${r.n[j]}" data-caption="${esc(p.name)}" style="cursor:pointer">${slotsHTML(a.str)}</div>`
+        : `<div class="num-card md neutral${spinning ? ' charging' : ''}${skinClass(p.skin)}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
       return `
         <div class="room-side${won ? ' won' : ''}${p.me ? ' me' : ''}" id="rs-${j}">
           <div class="room-name">${won ? '🏆 ' : ''}${esc(p.name)}${titleEmoji(p.title)}</div>
@@ -2212,6 +2345,7 @@
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
+        <p>Coins and skins: every roll earns coins (more for rarer rolls) and so does every duel you win. Spend them in the Duel tab on skins that change how your number looks. In-game coins only.</p>
         <p>Achievements unlock titles: equip one from your profile and it shows next to your name on the leaderboard and in duels. They are checked by the server, so nobody can wear a title they did not earn.</p>
         <p>Duel (top menu): create a game for 2 to 10 players and send the code. Everyone rolls at the same time and all numbers are revealed together; each round goes to the highest roll. Win by being first to 1–10 round wins, or first to an XP total. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
@@ -2229,6 +2363,7 @@
     FX.clear();
     clearTimeout(lbTimer);
     stopRoom();
+    clearTimeout(hubTimer);
     closeModal();
     tip.hidden = true;
     const [key, ...rest] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
@@ -2306,6 +2441,7 @@
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && currentView === 'leaderboard') drawLeaderboard();
+    if (!document.hidden && currentView === 'duel') drawLive();
     if (!document.hidden && currentView === 'room' && Room.code) {
       Room.changedAt = Date.now();
       if ($('#room-idle')) $('#room-idle').remove();
