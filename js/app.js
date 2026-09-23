@@ -2478,7 +2478,7 @@
   function renderLeaderboard() {
     currentView = 'leaderboard';
     const name = Store.player.name;
-    const tabs = [['day', 'Today'], ['week', 'This week'], ['all', 'All-time']];
+    const tabs = [['day', 'Today'], ['week', 'This week'], ['all', 'All-time'], ['xp', 'Lifetime XP']];
     app.innerHTML = `
       <div class="page">
         <h1 class="page-title">Leaderboard</h1>
@@ -2488,7 +2488,7 @@
           <div id="lb-list"><div class="empty">Loading…</div></div>
         </div>
         <p class="panel-note" style="text-align:center;margin-top:.9rem">
-          Best single roll per player · days reset at midnight UTC ·
+          <span id="lb-rule">${lbState.period === 'xp' ? 'Total XP of every roll ever made' : 'Best single roll per player · days reset at midnight UTC'}</span> ·
           ${name ? `playing as <b>${esc(name)}</b> · <a href="javascript:void 0" id="lb-name">change</a>` : '<a href="javascript:void 0" id="lb-name">pick a name</a>'}
         </p>
       </div>`;
@@ -2498,6 +2498,7 @@
       if (!btn) return;
       lbState.period = btn.dataset.period;
       document.querySelectorAll('.lb-tabs button').forEach(b => b.classList.toggle('on', b === btn));
+      $('#lb-rule').textContent = lbState.period === 'xp' ? 'Total XP of every roll ever made' : 'Best single roll per player · days reset at midnight UTC';
       $('#lb-list').innerHTML = '<div class="empty">Loading…</div>';
       drawLeaderboard();
     });
@@ -2516,7 +2517,7 @@
       return;
     }
     if (currentView !== 'leaderboard' || period !== lbState.period || !$('#lb-list')) return;
-    const when = { day: 'today', week: 'this week', all: 'yet' }[period];
+    const when = { day: 'today', week: 'this week', all: 'yet', xp: 'yet' }[period];
     $('#lb-list').innerHTML = data.entries.length
       ? data.entries.map(lbRowHTML).join('') + (data.mine ? `<div class="lb-gap">···</div>${lbRowHTML(data.mine)}` : '')
       : `<div class="empty">No rolls ${when}, be the first!</div>`;
@@ -2524,16 +2525,19 @@
     if (!document.hidden) lbTimer = setTimeout(() => { if (currentView === 'leaderboard') drawLeaderboard(); }, 60000);
   }
 
+  // XP à vie : des milliards possibles, affichés en abrégé (le détail au survol).
+  const compactXp = v => `<span title="${fmt(v)} XP">${v >= 1e6 ? compact(v) : fmt(v)} XP</span>`;
   function lbRowHTML(e) {
     const a = analysis(e.n);
+    const xp = lbState.period === 'xp';
     const medal = { 1: '🥇', 2: '🥈', 3: '🥉' }[e.rank];
     return `
       <div class="lb-row${e.me ? ' me' : ''}" data-number="${e.n}" data-caption="${esc(`#${e.rank} · ${e.name} · ${relTime(e.t)}`)}">
         <span class="lb-rank">${medal || '#' + e.rank}</span>
         <span class="lb-who"><a class="lb-name" href="${profileHref(e.name)}" title="See ${esc(e.name)}'s profile">${esc(e.name)}${e.me ? ' <span class="muted">(you)</span>' : ''}</a>${titleHTML(e.title)}</span>
-        <span class="lb-rolls mono" title="Rolls by this player ${{ day: 'today', week: 'this week', all: 'in total' }[lbState.period]}">${e.rolls ? plural(e.rolls, 'roll') : '–'}</span>
-        <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
-        <span class="lb-ep mono">${fmt(e.s)} XP</span>
+        <span class="lb-rolls mono" title="Rolls by this player ${{ day: 'today', week: 'this week', all: 'in total', xp: 'in total' }[lbState.period]}">${e.rolls ? plural(e.rolls, 'roll') : '–'}</span>
+        <span class="num-card sm" data-tier="${a.tier}"${xp ? ' title="Best roll"' : ''}>${a.str}</span>
+        <span class="lb-ep mono${xp ? ' lifetime' : ''}"${xp ? ' title="Lifetime XP"' : ''}>${xp ? compactXp(e.s) : `${fmt(e.s)} XP`}</span>
       </div>`;
   }
 

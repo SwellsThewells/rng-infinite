@@ -44,6 +44,7 @@ export function fakeRedis() {
     HGET: (k, f) => (db.has(k) && db.get(k).has(f) ? db.get(k).get(f) : null),
     HMGET: (k, ...fields) => fields.map(f => COMMANDS.HGET(k, f)),
     HGETALL: k => (db.has(k) ? [...db.get(k).entries()].flat() : []),
+    HKEYS: k => (db.has(k) ? [...db.get(k).keys()] : []),
     HINCRBY(k, f, by) { const h = hash(k), v = Number(h.get(f) || 0) + Number(by); h.set(f, String(v)); return v; },
     SADD(k, ...members) {
       const s = set(k);
@@ -54,6 +55,7 @@ export function fakeRedis() {
     SMEMBERS: k => (db.has(k) ? [...db.get(k)] : []),
     SCARD: k => (db.has(k) ? db.get(k).size : 0),
     SISMEMBER: (k, m) => (db.has(k) && db.get(k).has(m) ? 1 : 0),
+    ZINCRBY(k, by, m) { const z = zset(k), v = (z.get(m) || 0) + Number(by); z.set(m, v); return String(v); },
     ZADD(k, ...pairs) {
       const z = zset(k);
       let added = 0;

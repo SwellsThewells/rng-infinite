@@ -721,7 +721,7 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 /* classement en ligne */
 #today-slot .feature-card { margin-top: 1.8rem; }
 .lb-card { margin-top: 1.4rem; border: 1px solid var(--outline); border-radius: .6rem; background: var(--surface); overflow: hidden; }
-.lb-tabs { display: grid; grid-template-columns: repeat(3, 1fr); border-bottom: 1px solid var(--outline); }
+.lb-tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 1px solid var(--outline); }
 .lb-tabs button {
   border: 0;
   border-bottom: 2px solid transparent;
@@ -1308,3 +1308,6 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 @media (prefers-reduced-motion: reduce) {
   .room-side[class*="side-"], .room-side[class*="side-"]::before, .room-side[class*="side-"]::after { animation: none !important; }
 }
+
+/* Classement Lifetime XP : le total est la valeur classée, mis en avant. */
+.lb-ep.lifetime { color: var(--ep-text, var(--prose)); font-weight: 800; font-size: .86rem; }

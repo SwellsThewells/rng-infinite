@@ -196,6 +196,18 @@ async function ownsPlayer(playerId, secret) {
 // Historique d'un joueur : sorted set (score = timestamp, membre = "timestamp:nombre", donc sans doublon).
 const historyKey = playerId => `hist:${playerId}`;
 const HISTORY_CAP = 100000;
+const XP_LB = 'lb:xp';
+
+// XP à vie recalculé depuis l'historique (mêmes doublons écartés que rebuildStats), pour remplir lb:xp une fois.
+function lifetimeXp(members) {
+  const seen = rollSet();
+  let xp = 0;
+  for (const m of members || []) {
+    const [t, n] = m.split(':').map(Number);
+    if (seen.add(n, t)) xp += engine.scoreOf(n);
+  }
+  return xp;
+}
 
 // Un même tirage peut porter l'heure du serveur ou, envoyé par une ancienne version du site, celle de l'appareil
 // (quelques dixièmes de seconde d'écart) : même nombre à moins d'une minute = même tirage. Même règle que js/store.js.
@@ -288,6 +300,8 @@ async function recordRoll(playerId, n, t) {
     ['ZREMRANGEBYRANK', historyKey(playerId), 0, -(HISTORY_CAP + 1)],
     // Stats des succès.
     ['HINCRBY', statsKey(playerId), 'rolls', 1],
+    // XP à vie (classement « Lifetime XP ») : la somme de tous ses tirages.
+    ['ZINCRBY', XP_LB, s, playerId],
     ['HINCRBY', statsKey(playerId), `t:${a.tier}`, 1],
   ];
   if (a.earnedIds.length) writes.push(['SADD', badgesKey(playerId), ...a.earnedIds]);
@@ -339,7 +353,7 @@ async function flushDue(now = Date.now()) {
 }
 
 module.exports = {
-  queueReveal, flushDue, PENDING_KEY,
+  queueReveal, flushDue, PENDING_KEY, XP_LB, lifetimeXp,
   engine, redis, dayKey, weekKey, scopes, cleanName, sha256, cors, send, verifyGoogleToken,
   ownsPlayer, historyKey, HISTORY_CAP, claimPlayer, claimName, nameKey, rollSet, findPlayer, recordRoll,
   Achievements, statsKey, readStats, toObject, OWNER_EMAIL_SHA256, markFresh,

@@ -1,8 +1,37 @@
-// GET /api/leaderboard?period=day|week|all&me=<playerId>
+// GET /api/leaderboard?period=day|week|all|xp&me=<playerId>
 // Top 50 des meilleurs tirages de la période, la place du joueur s'il est plus loin, et le nombre de tirages du jour.
-const { redis, scopes, dayKey, cors, send, flushDue } = require('./_lib');
+// period=xp : classement à l'XP à vie (somme de tous les tirages) ; chaque ligne montre aussi le meilleur tirage.
+const { redis, scopes, dayKey, historyKey, XP_LB, lifetimeXp, cors, send, flushDue } = require('./_lib');
 
 const LIMIT = 50;
+const XP_SCOPE = { period: 'xp', lb: XP_LB, best: 'best:all', count: 'count:all', total: 'rolls:all' };
+const MIGRATED = 'lb:xp:migrated';
+
+// Remplissage unique de lb:xp pour les joueurs d'avant ce classement (2026-09-23), par lots, en quelques secondes au plus.
+// Les tirages suivants l'incrémentent dans recordRoll ; recalculer depuis l'historique donne le même total.
+async function migrateXp() {
+  const [done] = await redis([['GET', MIGRATED]]);
+  if (done) return;
+  const [lock] = await redis([['SET', `${MIGRATED}:lock`, '1', 'NX', 'PX', 20000]]);
+  if (lock !== 'OK') return;
+  const start = Date.now();
+  const [ids, finished] = await redis([['HKEYS', 'names'], ['SMEMBERS', `${MIGRATED}:ids`]]);
+  const todo = (ids || []).filter(id => !(finished || []).includes(id));
+  for (let i = 0; i < todo.length && Date.now() - start < 6000; i += 20) {
+    const batch = todo.slice(i, i + 20);
+    const lists = await redis(batch.map(id => ['ZRANGE', historyKey(id), 0, -1]));
+    const writes = [];
+    batch.forEach((id, j) => {
+      const xp = lifetimeXp(lists[j]);
+      if (xp > 0) writes.push(['ZADD', XP_LB, xp, id]);
+    });
+    writes.push(['SADD', `${MIGRATED}:ids`, ...batch]);
+    await redis(writes);
+    if (i + 20 >= todo.length) await redis([['SET', MIGRATED, '1'], ['DEL', `${MIGRATED}:ids`]]);
+  }
+  if (!todo.length) await redis([['SET', MIGRATED, '1'], ['DEL', `${MIGRATED}:ids`]]);
+  await redis([['DEL', `${MIGRATED}:lock`]]);
+}
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
@@ -10,10 +39,11 @@ module.exports = async (req, res) => {
   if (req.method !== 'GET') return send(res, 405, { error: 'Use GET' });
   try {
     const params = new URL(req.url, 'http://localhost').searchParams;
-    const period = ['day', 'week', 'all'].includes(params.get('period')) ? params.get('period') : 'day';
+    const period = ['day', 'week', 'all', 'xp'].includes(params.get('period')) ? params.get('period') : 'day';
     const me = /^[0-9a-f]{16}$/.test(params.get('me') || '') ? params.get('me') : '';
     const t = Date.now();
-    const scope = scopes(t).find(p => p.period === period);
+    if (period === 'xp') await migrateXp();
+    const scope = period === 'xp' ? XP_SCOPE : scopes(t).find(p => p.period === period);
 
     const [flat, rolls, rollsToday, players, myRank] = await redis([
       ['ZREVRANGE', scope.lb, 0, LIMIT - 1, 'WITHSCORES'],
@@ -39,10 +69,16 @@ module.exports = async (req, res) => {
 
     // Les identifiants ne sortent jamais du serveur : seul un drapeau "me" signale la ligne du joueur.
     // rolls = nombre de tirages du joueur sur la période (compté depuis le 2026-09-21, 0 pour les tirages d'avant).
+    // En XP à vie, s = l'XP total du joueur ; n et t restent ceux de son meilleur tirage.
+    const xpOf = {};
+    for (let i = 0; i < flat.length; i += 2) xpOf[flat[i]] = Number(flat[i + 1]);
+    let myXp = null;
+    if (period === 'xp' && me && myRank !== null) [myXp] = await redis([['ZSCORE', XP_LB, me]]);
     const toEntry = (id, i, rank) => {
       if (!details[i]) return null;
       const d = JSON.parse(details[i]);
-      return { rank, name: names[i] || 'Player', title: titles[i] || null, n: d.n, s: d.s, t: d.t, rolls: Number(counts[i] || 0), me: id === me };
+      const s = period === 'xp' ? (id in xpOf ? xpOf[id] : Number(myXp)) : d.s;
+      return { rank, name: names[i] || 'Player', title: titles[i] || null, n: d.n, s, t: d.t, rolls: Number(counts[i] || 0), me: id === me };
     };
     const entries = ids.map((id, i) => toEntry(id, i, i + 1)).filter(Boolean);
     const mine = meOutsideTop ? toEntry(me, ids.length, Number(myRank) + 1) : null;

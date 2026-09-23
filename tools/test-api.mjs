@@ -641,4 +641,30 @@ await later(31000, async () => null);
 assert.ok(!(await call(roomApi, { url: '/api/room?live=1' })).body.rooms.some(x => x.code === pair), 'désertée : retirée de Live now');
 assert.equal((await roomGet(pair)).body.status, 'abandoned');
 
+// 20. Classement Lifetime XP : somme de tous les tirages (historique sans doublons), rempli une fois pour les anciens
+// joueurs, puis tenu à jour à chaque tirage.
+{
+  const { lifetimeXp } = require(path.join(ROOT, 'api/_lib.js'));
+  const xpFromHistory = who => lifetimeXp(run([['ZRANGE', `hist:${who.playerId}`, 0, -1]])[0].result);
+  // Comme en production : un classement vide et un joueur d'avant, jamais compté.
+  db.delete('lb:xp'); db.delete('lb:xp:migrated');
+  r = await call(leaderboard, { url: `/api/leaderboard?period=xp&me=${alice.playerId}` });
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.equal(r.body.period, 'xp');
+  const xpA = r.body.entries.find(e => e.name === 'Alice');
+  assert.equal(xpA.s, xpFromHistory(alice), 'XP à vie = somme de son historique');
+  assert.ok(xpA.me, 'ma ligne marquée');
+  const sorted = r.body.entries.map(e => e.s);
+  assert.deepEqual(sorted, [...sorted].sort((x, y) => y - x), 'trié par XP à vie');
+  assert.ok(r.body.entries.every(e => Number.isInteger(e.n) && e.s >= engine.scoreOf(e.n)), 'avec le meilleur tirage, jamais plus que le total');
+  assert.equal(run([['GET', 'lb:xp:migrated']])[0].result, '1', 'rempli une seule fois');
+  // Un nouveau tirage s'ajoute tout de suite.
+  db.delete(`cooldown:${frank.playerId}`);
+  const before = (await call(leaderboard, { url: '/api/leaderboard?period=xp' })).body.entries.find(e => e.name === 'Frank').s;
+  const got = (await call(roll, { method: 'POST', body: frank })).body;
+  const after = (await call(leaderboard, { url: '/api/leaderboard?period=xp' })).body.entries.find(e => e.name === 'Frank').s;
+  assert.equal(after, before + got.s, 'le tirage s\'ajoute au total');
+  assert.equal(after, xpFromHistory(frank), 'toujours égal à l\'historique');
+}
+
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);
