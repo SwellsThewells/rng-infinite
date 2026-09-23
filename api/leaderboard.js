@@ -1,11 +1,12 @@
 // GET /api/leaderboard?period=day|week|all&me=<playerId>
 // Top 50 des meilleurs tirages de la période, la place du joueur s'il est plus loin, et le nombre de tirages du jour.
-const { redis, scopes, dayKey, cors, send } = require('./_lib');
+const { redis, scopes, dayKey, cors, send, flushDue } = require('./_lib');
 
 const LIMIT = 50;
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   if (req.method !== 'GET') return send(res, 405, { error: 'Use GET' });
   try {
     const params = new URL(req.url, 'http://localhost').searchParams;

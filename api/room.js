@@ -13,7 +13,7 @@
 // ils tirent comme tout le monde et réagissent après chaque manche. Une partie avec des bots ne compte ni en victoires
 // de duel ni en face-à-face (sinon on farmerait) ; les tirages des humains, eux, comptent comme des tirages normaux.
 const crypto = require('node:crypto');
-const { engine, redis, cleanName, claimPlayer, claimName, recordRoll, readStats, statsKey, Achievements, cors, send } = require('./_lib');
+const { engine, redis, cleanName, claimPlayer, claimName, queueReveal, readStats, statsKey, Achievements, cors, send, flushDue } = require('./_lib');
 const Shop = require('../js/shop.js');
 
 const MIN_PLAYERS = 2, MAX_PLAYERS = 10;
@@ -21,6 +21,9 @@ const MAX_WINS = 10;
 const XP_TARGETS = [25000, 50000, 100000, 250000, 1000000];
 const MAX_ROUNDS = 100; // garde-fou : au-delà, le plus de manches (puis d'XP) gagne
 const LEAD_MS = 2500; // délai avant la révélation commune : tout le monde a le temps de recevoir la manche
+// Révélation complète d'une manche à l'écran (dernier chiffre + gagnant, voir roundLength dans app.js) : les tirages
+// n'apparaissent dans l'historique, le classement et les stats qu'après.
+const REVEAL_MS = 9700;
 const GAP_MS = 8000; // écart minimal entre deux manches, comme le délai entre deux tirages
 const AUTO_MS = 15000; // la manche part toute seule 15 s après le premier joueur prêt
 const ABANDON_MS = 30000; // plus aucun joueur sur la page depuis 30 s : la partie s'arrête (sans gagnant ni stats)
@@ -157,6 +160,9 @@ async function advance(room, now = Date.now()) {
   const [lock] = await redis([['SET', `${roomKey(room.code)}:draw:${k}`, '1', 'NX', 'EX', TTL]]);
   if (lock !== 'OK') return (await load(room.code)) || room;
   const round = { t: now, revealAt: now + LEAD_MS, n: room.players.map(() => crypto.randomInt(0, 1000001)) };
+  room.rounds.push(round);
+  // Tirages (et bilan du duel s'il se termine) appliqués seulement une fois la manche révélée : voir queueReveal.
+  const rolls = room.players.map((p, i) => [p.id, round.n[i], round.t]).filter((x, i) => !room.players[i].bot);
   await redis([
     ['RPUSH', roundsKey(room.code), JSON.stringify(round)],
     ...[roomKey(room.code), playersKey(room.code), roundsKey(room.code)].map(key => ['EXPIRE', key, TTL]),
@@ -164,10 +170,9 @@ async function advance(room, now = Date.now()) {
     ...humans(room).map(p => ['SET', `cooldown:${p.id}`, '1', 'PX', GAP_MS]),
     ...touchLive(room, now),
     ...botReactions(room, round),
+    ...(score(room).done ? [['ZREM', LIVE_KEY, room.code]] : []), // partie finie : sort de Live now tout de suite
+    queueReveal(round.revealAt + REVEAL_MS, { room: room.code, k, rolls, w: duelWrites(room) }),
   ]);
-  await Promise.all(room.players.map((p, i) => (p.bot ? null : recordRoll(p.id, round.n[i], round.t))));
-  room.rounds.push(round);
-  await recordDuel(room);
   return room;
 }
 
@@ -188,15 +193,12 @@ function botReactions(room, round) {
 
 // Dernière manche tirée (une seule fois, sous le verrou) : résultat de la partie dans les stats des succès.
 // Partie avec des bots : rien (pas de victoire, de face-à-face ni de pièces de victoire à farmer).
-async function recordDuel(room) {
+// Bilan d'un duel terminé (duels joués, victoires, face-à-face), à appliquer avec la révélation de la dernière manche.
+// Parties avec bots : rien (anti-farm).
+function duelWrites(room) {
   const sc = score(room);
-  if (!sc.done) return;
-  if (hasBots(room)) {
-    await redis([['ZREM', LIVE_KEY, room.code]]);
-    return;
-  }
+  if (!sc.done || hasBots(room)) return [];
   const writes = room.players.map(p => ['HINCRBY', statsKey(p.id), 'duels', 1]);
-  writes.push(['ZREM', LIVE_KEY, room.code]);
   if (sc.winner !== null) {
     // Face-à-face : le gagnant bat chacun des autres (h2h:<id> → "w:<adversaire>" victoires, "l:<adversaire>" défaites).
     const winnerId = room.players[sc.winner].id;
@@ -211,7 +213,7 @@ async function recordDuel(room) {
     if (room.players.length >= 5) writes.push(['HINCRBY', w, 'bigWin', 1]);
     if (room.mode === 'xp') writes.push(['HINCRBY', w, 'xpWin', 1]);
   }
-  await redis(writes);
+  return writes;
 }
 
 // État public, sans identifiant : `me` marque le joueur qui regarde. Partie finie : ses succès, pour annoncer les nouveaux.
@@ -270,6 +272,7 @@ async function liveRooms(now = Date.now()) {
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   try {
     if (req.method === 'GET') {
       const params = new URL(req.url, 'http://localhost').searchParams;

@@ -1,7 +1,7 @@
 // GET  /api/shop?me=<playerId>                                   → pièces, skins possédés, skin équipé
 // POST /api/shop { playerId, secret, action: 'buy' | 'equip', skin } → achète (et équipe) ou équipe un skin
 // Pièces = gains lus sur les stats tenues par le serveur, moins le champ "spent" : rien ne se crédite depuis le site.
-const { redis, ownsPlayer, readStats, statsKey, cors, send } = require('./_lib');
+const { redis, ownsPlayer, readStats, statsKey, cors, send, flushDue } = require('./_lib');
 const Shop = require('../js/shop.js');
 
 const isPlayerId = id => /^[0-9a-f]{16}$/.test(String(id || ''));
@@ -22,6 +22,7 @@ async function state(id) {
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   try {
     if (req.method === 'GET') {
       const me = new URL(req.url, 'http://localhost').searchParams.get('me');

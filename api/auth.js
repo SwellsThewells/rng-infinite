@@ -3,10 +3,11 @@
 // Le même compte Google retrouve donc son joueur (et ses places au classement) sur n'importe quel appareil.
 const crypto = require('node:crypto');
 const config = require('../js/config.js');
-const { redis, verifyGoogleToken, sha256, statsKey, OWNER_EMAIL_SHA256, markFresh, cors, send } = require('./_lib');
+const { redis, verifyGoogleToken, sha256, statsKey, OWNER_EMAIL_SHA256, markFresh, cors, send, flushDue } = require('./_lib');
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' });
   if (!config.googleClientId) return send(res, 503, { error: 'Google sign-in is not configured' });
   try {

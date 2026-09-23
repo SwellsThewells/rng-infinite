@@ -89,6 +89,13 @@ export function fakeRedis() {
       const [s, e] = range(l.length, a, b);
       return l.slice(s, e + 1);
     },
+    ZRANGEBYSCORE(k, min, max, ...opts) {
+      const lo = min === '-inf' ? -Infinity : Number(min), hi = max === '+inf' ? Infinity : Number(max);
+      let out = asc(k).filter(([, score]) => score >= lo && score <= hi).map(([m]) => m);
+      const i = opts.map(String).map(o => o.toUpperCase()).indexOf('LIMIT');
+      if (i >= 0) out = out.slice(Number(opts[i + 1]), Number(opts[i + 1]) + Number(opts[i + 2]));
+      return out;
+    },
     ZREMRANGEBYSCORE(k, min, max) {
       const lo = min === '-inf' ? -Infinity : Number(min), hi = max === '+inf' ? Infinity : Number(max);
       const removed = asc(k).filter(([, score]) => score >= lo && score <= hi);

@@ -2,13 +2,14 @@
 // Historique complet d'un joueur, pour le retrouver sur tous ses appareils (joueurs connectés avec Google).
 // Les tirages faits en ligne y sont ajoutés par /api/roll ; "add" y verse ceux que seul l'appareil connaissait
 // (hors ligne, ou d'avant la synchronisation). Réponse : tous les tirages, du plus ancien au plus récent.
-const { redis, ownsPlayer, historyKey, HISTORY_CAP, rollSet, statsKey, cors, send } = require('./_lib');
+const { redis, ownsPlayer, historyKey, HISTORY_CAP, rollSet, statsKey, cors, send, flushDue } = require('./_lib');
 
 const MAX_ADD = 5000; // par requête ; le site découpe au-delà
 const MIN_T = Date.UTC(2024, 0, 1);
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' });
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};

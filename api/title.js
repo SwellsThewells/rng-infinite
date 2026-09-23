@@ -1,10 +1,11 @@
 // POST /api/title { playerId, secret, title }
 // Équipe le titre d'un succès débloqué (affiché au classement, sur le profil et en duel) ; title vide = aucun titre.
 // Vérifié sur les stats tenues par le serveur : on ne peut pas s'équiper un succès qu'on n'a pas.
-const { redis, ownsPlayer, readStats, Achievements, cors, send } = require('./_lib');
+const { redis, ownsPlayer, readStats, Achievements, cors, send, flushDue } = require('./_lib');
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' });
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};

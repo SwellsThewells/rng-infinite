@@ -2,12 +2,13 @@
 // Profil public d'un joueur, ouvert depuis le classement : ses meilleurs tirages et sa collection de badges.
 // Calculé à partir de son historique (hist:<id>), comme ses propres pages History et Badges ; le classement,
 // lui, ne compte que les tirages faits par le serveur. Ni l'identifiant ni la liste complète des tirages ne sortent d'ici.
-const { engine, redis, cleanName, findPlayer, historyKey, rollSet, readStats, Achievements, cors, send } = require('./_lib');
+const { engine, redis, cleanName, findPlayer, historyKey, rollSet, readStats, Achievements, cors, send, flushDue } = require('./_lib');
 
 const BEST_LIMIT = 10;
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   if (req.method !== 'GET') return send(res, 405, { error: 'Use GET' });
   try {
     const params = new URL(req.url, 'http://localhost').searchParams;

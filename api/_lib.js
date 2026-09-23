@@ -317,7 +317,29 @@ async function recordRoll(playerId, n, t) {
   return { s, bestToday: improved.some(p => p.period === 'day'), dayRank, achievements: Achievements.unlocked(stats) };
 }
 
+// Tirages en attente de révélation. Un tirage de duel n'existe pour personne (historique, classement, stats, pièces,
+// succès) tant que sa révélation n'est pas finie à l'écran : sinon un 2e onglet ouvert sur History la gâche.
+// Chaque entrée = { rolls: [[id, n, t]…], w: [commandes Redis] }, score = heure de révélation complète.
+// N'importe quelle requête d'API applique les entrées échues ; ZREM garantit qu'une seule l'applique.
+const PENDING_KEY = 'pending';
+const queueReveal = (due, entry) => ['ZADD', PENDING_KEY, due, JSON.stringify(entry)];
+async function flushDue(now = Date.now()) {
+  try {
+    const [due] = await redis([['ZRANGEBYSCORE', PENDING_KEY, '-inf', now, 'LIMIT', 0, 20]]);
+    for (const member of due || []) {
+      const [claimed] = await redis([['ZREM', PENDING_KEY, member]]);
+      if (Number(claimed) !== 1) continue;
+      const entry = JSON.parse(member);
+      for (const [id, n, t] of entry.rolls || []) await recordRoll(id, n, t);
+      if (entry.w && entry.w.length) await redis(entry.w);
+    }
+  } catch (err) {
+    console.error('flushDue', err); // la requête en cours passe quand même ; la prochaine réessaiera
+  }
+}
+
 module.exports = {
+  queueReveal, flushDue, PENDING_KEY,
   engine, redis, dayKey, weekKey, scopes, cleanName, sha256, cors, send, verifyGoogleToken,
   ownsPlayer, historyKey, HISTORY_CAP, claimPlayer, claimName, nameKey, rollSet, findPlayer, recordRoll,
   Achievements, statsKey, readStats, toObject, OWNER_EMAIL_SHA256, markFresh,

@@ -2328,8 +2328,9 @@
     const readyCount = people.filter(p => p.ready).length;
     const countdown = d.autoAt ? ` · starts by itself in ${Math.max(0, Math.ceil((d.autoAt - serverNow()) / 1000))} s` : '';
     let cta, hint = '';
-    if (finished && !Room.achNoted && d.achievements) {
-      Room.achNoted = true;
+    // Les succès du duel arrivent avec la révélation de la dernière manche : annoncés dès qu'ils changent.
+    if (finished && d.achievements && Room.achNoted !== JSON.stringify(d.achievements)) {
+      Room.achNoted = JSON.stringify(d.achievements);
       noteAchievements(d.achievements);
     }
     if (finished) {
@@ -2408,13 +2409,15 @@
     const slots = cards.map(c => Array.from(c.querySelectorAll('.slot')));
     const padded = sides.map(x => x.a.str.padStart(slotCount, '0'));
 
-    // Mon tirage entre dans l'historique tout de suite, comme un tirage normal (une seule fois, même après rechargement).
+    // Mon tirage n'entre dans l'historique qu'une fois révélé (une seule fois, même après rechargement) : un autre onglet
+    // ouvert sur History ne peut pas le montrer avant. Le serveur fait de même (queueReveal dans api/room.js).
     const mine = d.players.findIndex(p => p.me);
-    if (mine >= 0 && !Store.rolls.some(x => x[0] === sides[mine].n && x[2] === r.t)) {
+    const keepMine = () => {
+      if (mine < 0 || Store.rolls.some(x => x[0] === sides[mine].n && x[2] === r.t)) return;
       Collection.ensure();
       Store.addRoll(sides[mine].n, sides[mine].s, r.t);
       Collection.add(Store.rolls[Store.rolls.length - 1], Store.rolls.length - 1);
-    }
+    };
 
     let revealed = 0;
     const timers = [];
@@ -2438,6 +2441,7 @@
     }
     at(clock + 600, () => {
       clearInterval(spin);
+      keepMine();
       sides.forEach((x, j) => {
         cards[j].classList.remove('neutral', 'charging');
         cards[j].dataset.tier = x.a.tier;
@@ -2461,7 +2465,8 @@
       if (r.winner !== null) replay($(`.board-row[data-pi="${r.winner}"]`), 'bump');
       if (Room.shown < Room.data.rounds.length) playRound(Room.shown);
     });
-    Room.anim = { cancel() { timers.forEach(clearTimeout); clearInterval(spin); } };
+    // Animation coupée (on quitte le duel) : le tirage est gardé quand même, à l'heure où il aurait été révélé.
+    Room.anim = { cancel() { timers.forEach(clearTimeout); clearInterval(spin); at(clock + 600, keepMine); } };
     drawRoom();
   }
 

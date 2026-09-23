@@ -2,13 +2,14 @@
 // Le serveur tire le nombre (personne ne peut choisir son 1337), calcule l'XP avec le moteur du site,
 // puis met à jour le meilleur tirage du joueur pour le jour, la semaine et tous les temps.
 const crypto = require('node:crypto');
-const { redis, cleanName, cors, send, claimPlayer, claimName, recordRoll } = require('./_lib');
+const { redis, cleanName, cors, send, claimPlayer, claimName, recordRoll, flushDue } = require('./_lib');
 
 // Une révélation dure au moins ~10 s : 8 s minimum entre deux tirages ne gêne jamais un vrai joueur.
 const COOLDOWN_MS = 8000;
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
+  await flushDue();
   if (req.method !== 'POST') return send(res, 405, { error: 'Use POST' });
   try {
     const body = typeof req.body === 'string' ? JSON.parse(req.body || '{}') : req.body || {};

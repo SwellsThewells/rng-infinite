@@ -331,8 +331,21 @@ const round1 = r.body.rounds[0];
 assert.equal(round1.n.length, 3);
 assert.deepEqual(round1.s, round1.n.map(n => engine.scoreOf(n)));
 assert.equal(round1.revealAt - round1.t, 2500);
-assert.equal((await call(history, { method: 'POST', body: aliceTab })).body.rolls.length, histA + 1, 'dans l\'historique');
-assert.equal(await countOf('Alice'), countA + 1, 'et au classement');
+// Anti-spoil : rien n'existe avant la fin de la révélation (historique, classement), puis tout d'un coup, une seule fois.
+assert.equal((await call(history, { method: 'POST', body: aliceTab })).body.rolls.length, histA, 'pas encore dans l\'historique');
+assert.equal(await countOf('Alice'), countA, 'ni au classement');
+assert.equal(db.get('pending').size, 1, 'en attente de révélation');
+await later(2500 + 9600, async () => {
+  assert.equal((await call(history, { method: 'POST', body: aliceTab })).body.rolls.length, histA, 'toujours pas, 100 ms avant la fin');
+});
+await later(100, async () => {
+  assert.equal((await call(history, { method: 'POST', body: aliceTab })).body.rolls.length, histA + 1, 'dans l\'historique une fois révélé');
+  assert.equal(await countOf('Alice'), countA + 1, 'et au classement');
+  assert.equal(await countOf('Carol'), (await countOf('Carol')), 'stable');
+});
+assert.equal(db.get('pending').size, 0, 'appliqué une seule fois');
+await Promise.all([call(history, { method: 'POST', body: aliceTab }), roomGet(code)]);
+assert.equal((await call(history, { method: 'POST', body: aliceTab })).body.rolls.length, histA + 1, 'pas en double');
 
 // Manche 2 : seule Alice est prête ; 15 s plus tard, le sondage lance la manche pour tout le monde.
 await later(11000, () => roomPost(alice, 'ready', { code }));
@@ -363,6 +376,8 @@ assert.equal((await roomPost(alice, 'ready', { code })).status, 422, 'partie fin
 // Le gagnant débloque « Duelist » ; les joueurs reçoivent leurs succès à la fin, pour annoncer les nouveaux.
 const winnerWho = [alice, bobNow, carol][state.winner];
 r = await roomGet(code, winnerWho);
+assert.ok(!r.body.achievements.includes('duelist'), 'pas avant la révélation de la dernière manche');
+r = await later(2500 + 9700, () => roomGet(code, winnerWho));
 assert.ok(r.body.achievements.includes('duelist'), 'le gagnant a le succès Duelist');
 assert.equal((await roomGet(code, dave)).body.achievements, undefined, 'rien pour un spectateur');
 
@@ -505,6 +520,7 @@ assert.deepEqual([listed.status, listed.count, listed.size, listed.host], ['lobb
 assert.ok(!JSON.stringify(r.body).includes(dave.playerId), 'aucun id');
 
 // 17. Rivalités : chaque partie finie compte dans le face-à-face gagnant/perdants.
+clock += 2500 + 9700; // le bilan de la course arrive avec la révélation de sa dernière manche
 const raceWinner = state.winner === 0 ? alice : dave, raceLoser = state.winner === 0 ? dave : alice;
 if (state.winner !== null) {
   const winnerName = state.players[state.winner].name, loserName = state.players[1 - state.winner].name;
@@ -531,13 +547,15 @@ r = await later(0, () => roomPost(gina, 'ready', { code: botRoom }));
 assert.equal(r.body.rounds.length, 1, 'je suis prêt, les bots aussi : la manche part');
 assert.equal(r.body.rounds[0].n.length, 3);
 for (const x of r.body.reacts) assert.ok(x.t > r.body.rounds[0].revealAt, 'réactions des bots après la révélation');
-r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
-assert.ok(r.body.entries.some(e => e.name === 'Gina'), 'mon tirage compte au classement');
+r = await later(2500 + 9700, () => call(leaderboard, { url: '/api/leaderboard?period=all' }));
+assert.ok(r.body.entries.some(e => e.name === 'Gina'), 'mon tirage compte au classement (une fois révélé)');
 assert.ok(!r.body.entries.some(e => BOT_NAME_RE.test(e.name)), 'les bots n\'y sont pas');
 let botState = (await roomGet(botRoom, gina)).body;
 while (botState.status === 'playing') {
   botState = await later(11000, async () => (await roomPost(gina, 'ready', { code: botRoom })).body);
 }
+clock += 2500 + 9700;
+await roomGet(botRoom, gina); // dernière manche révélée : tout est appliqué
 assert.deepEqual(run([['HMGET', `stats:${gina.playerId}`, 'duels', 'duelWins']])[0].result, ginaStatsBefore, 'partie avec bots : pas de victoire de duel');
 assert.equal(run([['EXISTS', `h2h:${gina.playerId}`]])[0].result, 0, 'ni de face-à-face');
 r = await roomPost(gina, 'rematch', { code: botRoom });
