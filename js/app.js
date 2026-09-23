@@ -1968,7 +1968,7 @@
         <h1 class="page-title">Shop</h1>
         <div class="panel">
           <div class="panel-head"><h3 class="panel-title">Skins</h3><span class="coins mono" id="d-coins"></span></div>
-          <p class="panel-note" style="margin-top:-.3rem">Change how your number looks, on your rolls and on your cards in duels. Earn coins by rolling (Common 1, Rare 5, Epic 10, Anomaly 25, Mythic 100) and by winning duels (+25).</p>
+          <p class="panel-note" style="margin-top:-.3rem">Change how your number looks, on your rolls and on your cards in duels. Earn coins by rolling (${Object.entries(Shop.COINS).map(([t, v]) => `${t[0].toUpperCase()}${t.slice(1)} ${v}`).join(', ')}) and by winning duels (+${Shop.DUEL_WIN_COINS}).</p>
           <div class="skin-grid" id="d-skins"></div>
         </div>
       </div>`;
