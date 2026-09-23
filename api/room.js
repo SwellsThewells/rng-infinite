@@ -23,6 +23,7 @@ const MAX_ROUNDS = 100; // garde-fou : au-delà, le plus de manches (puis d'XP) 
 const LEAD_MS = 2500; // délai avant la révélation commune : tout le monde a le temps de recevoir la manche
 const GAP_MS = 8000; // écart minimal entre deux manches, comme le délai entre deux tirages
 const AUTO_MS = 15000; // la manche part toute seule 15 s après le premier joueur prêt
+const ABANDON_MS = 30000; // plus aucun joueur sur la page depuis 30 s : la partie s'arrête (sans gagnant ni stats)
 const TTL = 86400; // une salle est gardée un jour après sa dernière action
 const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
 const REACT_SHOWN_MS = 15000; // réactions renvoyées aux sondages pendant 15 s
@@ -108,6 +109,28 @@ function score(room) {
   return { list, wins, totals, done, winner };
 }
 
+// Dernier signe de vie des joueurs humains (les bots ne comptent pas) ; à défaut, la création de la salle.
+function lastSeen(room) {
+  return Math.max(Number(room.h.created) || 0, ...humans(room).map(p => Number(room.h[`seen:${p.id}`]) || 0));
+}
+
+// Partie désertée : personne n'est revenu depuis 30 s → elle s'arrête pour de bon et sort de "Live now".
+// Renvoie true si la partie est (ou vient d'être) arrêtée.
+async function checkAbandoned(room, now = Date.now()) {
+  if (room.h.ended === '1') return true;
+  if (score(room).done || now - lastSeen(room) <= ABANDON_MS) return false;
+  await redis([['HSET', roomKey(room.code), 'ended', 1], ['ZREM', LIVE_KEY, room.code]]);
+  room.h.ended = '1';
+  return true;
+}
+
+// Un joueur de la salle vient de se manifester (sondage ou action).
+async function touchSeen(room, id, now = Date.now()) {
+  if (!room.players.some(p => p.id === id && !p.bot)) return;
+  await redis([['HSET', roomKey(room.code), `seen:${id}`, now]]);
+  room.h[`seen:${id}`] = String(now);
+}
+
 // Manche pour laquelle un joueur est prêt ; un bot l'est toujours.
 const readyFor = (room, p) => (p.bot ? room.rounds.length : room.h[`ready:${p.id}`] == null ? -1 : Number(room.h[`ready:${p.id}`]));
 const humans = room => room.players.filter(p => !p.bot);
@@ -116,7 +139,7 @@ const hasBots = room => room.players.some(p => p.bot);
 // Lance la manche suivante si tout le monde est prêt (ou 15 s après le premier prêt). Un seul appel (verrou par
 // manche) tire les nombres de tous les joueurs au même instant.
 async function advance(room, now = Date.now()) {
-  if (!room.started || score(room).done) return room;
+  if (!room.started || room.h.ended === '1' || score(room).done) return room;
   const k = room.rounds.length;
   // Les bots ne lancent jamais une manche : il faut au moins un humain prêt.
   const ready = humans(room).filter(p => readyFor(room, p) === k).length;
@@ -194,7 +217,7 @@ async function recordDuel(room) {
 async function view(room, me) {
   const sc = score(room);
   const k = room.rounds.length;
-  const status = !room.started ? 'lobby' : sc.done ? 'done' : 'playing';
+  const status = sc.done ? 'done' : room.h.ended === '1' ? 'abandoned' : !room.started ? 'lobby' : 'playing';
   const readyCount = humans(room).filter(p => readyFor(room, p) === k).length;
   const first = room.h[`first:${k}`];
   const last = room.rounds[k - 1];
@@ -235,6 +258,7 @@ async function liveRooms(now = Date.now()) {
     for (let j = 0; j < flat.length; j += 2) h[flat[j]] = flat[j + 1];
     const players = (out[i * 3 + 1] || []).map(p => JSON.parse(p));
     if (!h.host || !players.length) return null;
+    if (h.ended === '1' || now - lastSeen({ h, players }) > ABANDON_MS) return null; // désertée
     return {
       code, status: h.started === '1' ? 'playing' : 'lobby', size: Number(h.size), count: players.length,
       mode: h.mode, target: Number(h.target), round: Number(out[i * 3 + 2] || 0),
@@ -251,9 +275,13 @@ module.exports = async (req, res) => {
       if (params.get('live')) return send(res, 200, { rooms: await liveRooms() });
       const code = String(params.get('code') || '').toUpperCase();
       const me = isPlayerId(params.get('me')) ? params.get('me') : '';
-      const room = isCode(code) ? await load(code) : null;
+      let room = isCode(code) ? await load(code) : null;
       if (!room) return send(res, 404, { error: 'No duel with this code' });
-      return send(res, 200, await view(await advance(room), me));
+      if (!(await checkAbandoned(room))) {
+        if (me) await touchSeen(room, me);
+        room = await advance(room);
+      }
+      return send(res, 200, await view(room, me));
     }
     if (req.method !== 'POST') return send(res, 405, { error: 'Use GET or POST' });
 
@@ -275,7 +303,8 @@ module.exports = async (req, res) => {
         const list = players || [await seat(playerId, name)];
         await redis([
           ['HSET', roomKey(code), 'size', players ? list.length : r.size, 'mode', r.mode, 'target', r.target, 'created', Date.now(),
-            'count', list.length, 'started', players ? 1 : 0, 'public', r.isPublic ? 1 : 0, ...list.flatMap(p => [`m:${p.id}`, 1])],
+            'count', list.length, 'started', players ? 1 : 0, 'public', r.isPublic ? 1 : 0, ...list.flatMap(p => [`m:${p.id}`, 1]),
+            ...list.filter(p => !p.bot).flatMap(p => [`seen:${p.id}`, Date.now()])],
           ['RPUSH', playersKey(code), ...list.map(p => JSON.stringify(p))],
           ['EXPIRE', roomKey(code), TTL],
           ['EXPIRE', playersKey(code), TTL],
@@ -302,6 +331,8 @@ module.exports = async (req, res) => {
     let room = isCode(code) ? await load(code) : null;
     if (!room) return send(res, 404, { error: 'No duel with this code' });
     const member = room.players.some(p => p.id === playerId);
+    if (body.action !== 'rematch' && (await checkAbandoned(room))) return send(res, 422, { error: 'This duel ended: everyone left' });
+    if (member) await touchSeen(room, playerId);
 
     if (body.action === 'join') {
       if (member) return send(res, 200, await view(room, playerId));
@@ -314,7 +345,7 @@ module.exports = async (req, res) => {
         await redis([['HINCRBY', roomKey(code), 'count', -1], ['HDEL', roomKey(code), `m:${playerId}`]]);
         return send(res, 422, { error: 'This duel is full' });
       }
-      const writes = [['RPUSH', playersKey(code), JSON.stringify(await seat(playerId, name))], ...touchLive(room)];
+      const writes = [['RPUSH', playersKey(code), JSON.stringify(await seat(playerId, name))], ['HSET', roomKey(code), `seen:${playerId}`, Date.now()], ...touchLive(room)];
       if (Number(count) === room.size) writes.push(['HSET', roomKey(code), 'started', 1]); // complet : la partie commence
       await redis(writes);
       return send(res, 200, await view(await load(code), playerId));

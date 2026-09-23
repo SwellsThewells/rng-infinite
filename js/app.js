@@ -1539,10 +1539,32 @@
     Collection.ensure();
     app.innerHTML = `
       <div class="page page-wide">
-        <h1 class="page-title">Badge collection</h1>
-        ${collectionHTML(Collection.badges.size, collState)}
+        <h1 class="page-title">Badges</h1>
+        <div id="b-ach"><div class="panel"><div class="empty">${Store.player.name ? 'Loading your achievements…' : 'Roll once to start unlocking achievements and titles.'}</div></div></div>
+        <div class="panel">
+          <div class="panel-head"><h3 class="panel-title">Badge collection</h3></div>
+          ${collectionHTML(Collection.badges.size, collState)}
+        </div>
       </div>`;
     mountCollection(localCollection(), collState);
+    loadMyAchievements();
+  }
+
+  // Mes succès (calculés par le serveur) et le titre équipé, dans l'onglet Badges.
+  async function loadMyAchievements() {
+    const slot = $('#b-ach');
+    if (!slot || !Store.player.name) return;
+    let p;
+    try {
+      p = await Online.profile(Store.player.name);
+    } catch (err) {
+      if (slot.isConnected) slot.innerHTML = `<div class="panel"><div class="empty">${err.status === 404 ? 'Roll once to start unlocking achievements and titles.' : 'Achievements unavailable right now.'}</div></div>`;
+      return;
+    }
+    if (!slot.isConnected || currentView !== 'badges') return;
+    noteAchievements(p.achievements);
+    slot.innerHTML = `${p.title ? `<p class="panel-note equipped-title">Equipped title: ${titleHTML(p.title)}</p>` : ''}${achievementsPanelHTML(p, true)}`;
+    wireEquip(slot, loadMyAchievements);
   }
 
   function collectionHTML(found, state) {
@@ -1635,11 +1657,6 @@
     const collectionState = { filter: 'all', q: '' };
     $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''} ${titleHTML(p.title)}`;
     if (me) noteAchievements(p.achievements);
-    const unlocked = new Set(p.achievements || []);
-    // Les succès cachés (Owner) n'apparaissent que chez qui les a.
-    const achList = Ach.LIST.filter(a => !a.hidden || unlocked.has(a.id));
-    const achTotal = Ach.LIST.filter(a => !a.hidden).length;
-    const achDone = [...unlocked].filter(id => Ach.byId.has(id) && !Ach.byId.get(id).hidden).length;
     $('#p-body').innerHTML = `
       <p class="panel-note profile-sub">${p.rolls ? `Playing since ${day(p.since)} · last roll ${relTime(p.last)}` : 'No rolls yet'}</p>
       <div class="tiles">
@@ -1651,16 +1668,7 @@
       </div>
       ${!me && mine ? compareHTML(mine, p) : ''}
       ${duelsPanelHTML(p, me)}
-      <div class="panel">
-        <div class="panel-head"><h3 class="panel-title">Achievements</h3><span class="panel-note">${achDone} / ${achTotal} unlocked${me ? ' · equip one: its title shows next to your name on the leaderboard' : ''}</span></div>
-        <div class="ach-grid">${achList.map(a => {
-          const on = unlocked.has(a.id), equipped = p.title === a.id;
-          const action = !me || !on ? '' : equipped
-            ? '<button class="btn ach-btn" data-equip="">Unequip</button>'
-            : `<button class="btn ach-btn" data-equip="${a.id}">Equip</button>`;
-          return `<div class="ach${on ? '' : ' locked'}${equipped ? ' equipped' : ''}"><span class="ach-emoji">${on ? a.emoji : '🔒'}</span><span class="ach-text"><b>${esc(a.title)}</b><span>${esc(a.desc)}</span></span>${action}</div>`;
-        }).join('')}</div>
-      </div>
+      ${achievementsPanelHTML(p, me)}
       <div class="panel">
         <div class="panel-head"><h3 class="panel-title">Best rolls</h3><span class="panel-note">click a number for its badges</span></div>
         ${p.best.length ? `<div class="records">${p.best.map((x, k) => {
@@ -1680,22 +1688,46 @@
         ${collectionHTML(found, collectionState)}
       </div>`;
     mountCollection(profileCollection(p.badges), collectionState);
-    if (me) {
-      $('#p-body').querySelector('.ach-grid').addEventListener('click', async e => {
-        const btn = e.target.closest('[data-equip]');
-        if (!btn) return;
-        btn.disabled = true;
-        try {
-          const r = await Online.equip(btn.dataset.equip);
-          const a = Ach.byId.get(r.title);
-          toast(a ? `Title equipped: ${a.emoji} ${a.title}` : 'Title removed');
-          renderProfile(p.name);
-        } catch (err) {
-          btn.disabled = false;
-          toast(err.status === 422 ? err.message : 'Could not change your title, try again');
-        }
-      });
-    }
+    if (me) wireEquip($('#p-body'), () => renderProfile(p.name));
+  }
+
+  // Grille des succès d'un joueur (profil, onglet Badges) ; chez soi, boutons pour équiper le titre d'un succès.
+  function achievementsPanelHTML(p, me) {
+    const unlocked = new Set(p.achievements || []);
+    // Les succès cachés (Owner) n'apparaissent que chez qui les a.
+    const list = Ach.LIST.filter(a => !a.hidden || unlocked.has(a.id));
+    const total = Ach.LIST.filter(a => !a.hidden).length;
+    const done = [...unlocked].filter(id => Ach.byId.has(id) && !Ach.byId.get(id).hidden).length;
+    return `
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title">Achievements & titles</h3><span class="panel-note">${done} / ${total} unlocked${me ? ' · equip one: its title shows next to your name on the leaderboard and in duels' : ''}</span></div>
+        <div class="ach-grid">${list.map(a => {
+          const on = unlocked.has(a.id), equipped = p.title === a.id;
+          const action = !me || !on ? '' : equipped
+            ? '<button class="btn ach-btn" data-equip="">Unequip</button>'
+            : `<button class="btn ach-btn" data-equip="${a.id}">Equip</button>`;
+          return `<div class="ach${on ? '' : ' locked'}${equipped ? ' equipped' : ''}"><span class="ach-emoji">${on ? a.emoji : '🔒'}</span><span class="ach-text"><b>${esc(a.title)}</b><span>${esc(a.desc)}</span></span>${action}</div>`;
+        }).join('')}</div>
+      </div>`;
+  }
+
+  function wireEquip(root, rerender) {
+    const grid = root.querySelector('.ach-grid');
+    if (!grid) return;
+    grid.addEventListener('click', async e => {
+      const btn = e.target.closest('[data-equip]');
+      if (!btn) return;
+      btn.disabled = true;
+      try {
+        const r = await Online.equip(btn.dataset.equip);
+        const a = Ach.byId.get(r.title);
+        toast(a ? `Title equipped: ${a.emoji} ${a.title}` : 'Title removed');
+        rerender();
+      } catch (err) {
+        btn.disabled = false;
+        toast(err.status === 422 ? err.message : 'Could not change your title, try again');
+      }
+    });
   }
 
   // Duels d'un joueur : bilan, face-à-face avec moi, rivaux les plus affrontés.
@@ -1848,11 +1880,6 @@
             <p class="panel-note">Ask the host for the 5-character code, or open the link they share.</p>
           </div>
         </div>
-        <div class="panel">
-          <div class="panel-head"><h3 class="panel-title">Skins</h3><span class="coins mono" id="d-coins"></span></div>
-          <p class="panel-note" style="margin-top:-.3rem">Change how your number looks, on your rolls and on your cards in duels. Earn coins by rolling (Common 1, Rare 5, Epic 10, Anomaly 25, Mythic 100) and by winning duels (+25).</p>
-          <div class="skin-grid" id="d-skins"></div>
-        </div>
       </div>`;
     const drawSetup = () => {
       const p = duelPrefs();
@@ -1880,6 +1907,19 @@
     $('#d-bots').addEventListener('click', () => createRoom(duelPrefs().size - 1));
     $('#d-join').addEventListener('submit', e => { e.preventDefault(); joinRoom($('#d-code').value); });
     drawLive();
+  }
+
+  function renderShop() {
+    currentView = 'shop';
+    app.innerHTML = `
+      <div class="page page-wide">
+        <h1 class="page-title">Shop</h1>
+        <div class="panel">
+          <div class="panel-head"><h3 class="panel-title">Skins</h3><span class="coins mono" id="d-coins"></span></div>
+          <p class="panel-note" style="margin-top:-.3rem">Change how your number looks, on your rolls and on your cards in duels. Earn coins by rolling (Common 1, Rare 5, Epic 10, Anomaly 25, Mythic 100) and by winning duels (+25).</p>
+          <div class="skin-grid" id="d-skins"></div>
+        </div>
+      </div>`;
     drawShop();
   }
 
@@ -1929,7 +1969,7 @@
         grid.innerHTML = '<div class="empty">Shop unavailable right now.</div>';
         return;
       }
-      if (currentView !== 'duel' || !$('#d-skins')) return;
+      if (currentView !== 'shop' || !$('#d-skins')) return;
     }
     Store.setSetting('skin', state.skin);
     $('#d-coins').textContent = `🪙 ${fmt(state.coins)}`;
@@ -2053,7 +2093,12 @@
         return;
       }
     }
-    if (token !== Room.token || currentView !== 'room' || document.hidden) return;
+    if (token !== Room.token || currentView !== 'room') return;
+    // Onglet caché : un simple "je suis là" toutes les 10 s, pour que la partie ne s'arrête pas (30 s sans personne).
+    if (document.hidden) {
+      if (Room.data && ['lobby', 'playing'].includes(Room.data.status)) Room.timer = setTimeout(() => pollRoom(token), 10000);
+      return;
+    }
     // Onglet oublié ouvert (joueurs qui ne viennent pas, partie abandonnée) : pause au bout de 10 min sans changement.
     if (Date.now() - Room.changedAt > ROOM_IDLE_MS) {
       if (!$('#room-idle')) {
@@ -2064,6 +2109,7 @@
     }
     // Partie finie : sondée plus lentement, seulement pour voir arriver la revanche.
     const d = Room.data;
+    if (d && d.status === 'abandoned') return;
     if (!d || d.status !== 'done') Room.timer = setTimeout(() => pollRoom(token), Room.anim ? 3000 : ROOM_POLL_MS);
     else if (!d.next && d.players.some(p => p.me)) Room.timer = setTimeout(() => pollRoom(token), 3000);
   }
@@ -2148,6 +2194,18 @@
     const d = Room.data, body = $('#room-body');
     if (!body) return;
     const me = d.players.find(p => p.me);
+
+    if (d.status === 'abandoned' && !Room.anim) {
+      if (Room.view === 'abandoned') return;
+      Room.view = 'abandoned';
+      body.innerHTML = `
+        <div class="room-code-box">
+          <div class="room-result">⏹ This duel ended</div>
+          <p class="panel-note">Everyone left for more than 30 seconds, so nothing was counted for this game (your rolls still are).</p>
+          <div class="room-buttons"><a class="btn-roll small" href="#/duel">⚔️ New game</a><a class="btn" href="#/">Home</a></div>
+        </div>`;
+      return;
+    }
 
     if (d.status === 'lobby') {
       if (Room.view !== 'lobby') {
@@ -2444,7 +2502,7 @@
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
         <p>No one around? Play a duel against bots from the Duel tab: your rolls count as usual, but not duel wins, rivalries or duel achievements.</p>
-        <p>Coins and skins: every roll earns coins (more for rarer rolls) and so does every duel you win. Spend them in the Duel tab on skins that change how your number looks. In-game coins only.</p>
+        <p>Coins and skins: every roll earns coins (more for rarer rolls) and so does every duel you win. Spend them in the Shop tab on skins that change how your number looks. In-game coins only.</p>
         <p>Achievements unlock titles: equip one from your profile and it shows next to your name on the leaderboard and in duels. They are checked by the server, so nobody can wear a title they did not earn.</p>
         <p>Duel (top menu): create a game for 2 to 10 players and send the code. Everyone rolls at the same time and all numbers are revealed together; each round goes to the highest roll. Win by being first to 1–10 round wins, or first to an XP total. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
@@ -2455,7 +2513,7 @@
   }
 
   // ---------------------------------------------------------------- navigation, thème, clavier
-  const ROUTES = { '': renderHome, history: renderHistory, stats: renderStats, badges: renderBadges, leaderboard: renderLeaderboard, about: renderAbout, duel: renderDuelHub };
+  const ROUTES = { '': renderHome, history: renderHistory, stats: renderStats, badges: renderBadges, leaderboard: renderLeaderboard, about: renderAbout, duel: renderDuelHub, shop: renderShop };
 
   function route() {
     if (session && !session.finished) session.cancel();

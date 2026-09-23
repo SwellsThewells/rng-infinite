@@ -272,8 +272,11 @@ const bobNow = { ...bob, name: 'Sacha' };
 const BOT_NAME_RE = /^(Robo|DiceBot|Lucky 9000|Glitch|Byte|Clanky|Sparky|Nano|Beep Boop|Tux|Bot \d+)$/;
 const carol = { playerId: 'd'.repeat(16), secret: '4'.repeat(32), name: 'Carol' };
 const dave = { playerId: 'e'.repeat(16), secret: '5'.repeat(32), name: 'Dave' };
+// À partir d'ici, horloge simulée qu'on avance à la main : les délais (8 s, 15 s, 30 s de présence) se comparent
+// toujours à la même horloge.
 let clock = 0;
-const later = async (ms, fn) => { clock += ms; Date.now = () => realNow() + clock; try { return await fn(); } finally { Date.now = realNow; } };
+Date.now = () => realNow() + clock;
+const later = async (ms, fn) => { clock += ms; return fn(); };
 
 // Règles bornées : 2 à 10 joueurs, 1 à 10 manches, paliers d'XP connus.
 r = await roomPost(dave, 'create', { size: 50, mode: 'rounds', target: 99 });
@@ -594,5 +597,30 @@ const afterLimit = calls;
 assert.equal((await call(roomApi, { url: '/api/room?code=ZZZZZ', headers: ipHeaders })).status, 429);
 assert.equal(calls, afterLimit, 'une requête bloquée ne coûte rien à la base');
 assert.equal((await call(roomApi, { url: '/api/room?code=ZZZZZ', headers: { 'x-forwarded-for': '198.51.100.1' } })).status, 404, 'une autre IP passe');
+
+// 20. Partie désertée : plus aucun joueur sur la page depuis 30 s → elle s'arrête, sans gagnant ni stats.
+const jade = { playerId: '4'.repeat(16), secret: 'e'.repeat(32), name: 'Jade' };
+r = await roomPost(jade, 'create', { size: 2, bots: 1 });
+const lonely = r.body.code;
+const jadeDuels = run([['HGET', `stats:${jade.playerId}`, 'duels']])[0].result;
+r = await later(20000, () => roomGet(lonely, jade));
+assert.equal(r.body.status, 'playing', '20 s : toujours là (le sondage compte comme présence)');
+r = await later(25000, () => roomGet(lonely));
+assert.equal(r.body.status, 'playing', '25 s après son dernier passage : pas encore');
+r = await later(6000, () => roomGet(lonely));
+assert.equal(r.body.status, 'abandoned', '31 s sans personne : arrêtée');
+assert.equal((await roomPost(jade, 'ready', { code: lonely })).status, 422, 'plus de manche');
+assert.equal((await later(0, () => roomGet(lonely, jade))).body.status, 'abandoned', 'revenir ne la relance pas');
+assert.equal(run([['HGET', `stats:${jade.playerId}`, 'duels']])[0].result, jadeDuels, 'rien de compté');
+// Deux humains : tant que l'un des deux reste, la partie continue ; un salon public déserté sort de "Live now".
+r = await roomPost(jade, 'create', { size: 3 });
+const pair = r.body.code;
+await roomPost(ivy, 'join', { code: pair });
+assert.ok((await call(roomApi, { url: '/api/room?live=1' })).body.rooms.some(x => x.code === pair));
+for (let i = 0; i < 3; i++) await later(20000, () => roomGet(pair, ivy)); // Ivy reste, Jade est partie
+assert.equal((await roomGet(pair)).body.status, 'lobby', 'Ivy est encore là');
+await later(31000, async () => null);
+assert.ok(!(await call(roomApi, { url: '/api/room?live=1' })).body.rooms.some(x => x.code === pair), 'désertée : retirée de Live now');
+assert.equal((await roomGet(pair)).body.status, 'abandoned');
 
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

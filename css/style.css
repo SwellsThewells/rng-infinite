@@ -991,3 +991,4 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 @media (prefers-reduced-motion: reduce) { .skin-fire .slot, .skin-rainbow .slot, .skin-chrome .slot, .skin-matrix .slot.revealed { animation: none; } }
 @media (max-width: 560px) { .live-row { flex-wrap: wrap; } .skin-grid { grid-template-columns: 1fr 1fr; } .skin-tile .num-card.md { font-size: 1.15rem; } }
 .bot-name { font-weight: 700; color: var(--prose-2); }
+.equipped-title { margin: 0 0 .6rem; }
