@@ -50,9 +50,9 @@
     room(code) {
       return this.request(`/api/room?code=${encodeURIComponent(code)}&me=${Store.player.id}`);
     },
-    roomAction(action, code) {
+    roomAction(action, code, extra = {}) {
       const p = Store.player;
-      return this.request('/api/room', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name, action, code }) });
+      return this.request('/api/room', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name, action, code, ...extra }) });
     },
     leaderboard(period) {
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
@@ -632,7 +632,7 @@
           <div class="duel-entry">
             <div class="eyebrow">⚔️ Live duel with a friend</div>
             <div class="duel-entry-row">
-              <button class="btn" id="room-create">Create a duel</button>
+              <a class="btn" href="#/duel">Create a duel</a>
               <form class="duel-join" id="room-join-form">
                 <input class="input mono" id="room-code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Duel code">
                 <button class="btn" type="submit">Join</button>
@@ -652,7 +652,6 @@
     const pick = $('#pick-name');
     if (pick) pick.addEventListener('click', openSettings);
     loadTodayCard($('#today-slot'));
-    $('#room-create').addEventListener('click', createRoom);
     $('#room-join-form').addEventListener('submit', e => { e.preventDefault(); joinRoom($('#room-code').value); });
   }
 
@@ -1610,13 +1609,72 @@
   }
 
   // ---------------------------------------------------------------- duel en direct
-  // Un joueur crée une salle et donne le code ; les deux tirent en même temps, manche par manche. Le serveur tire les
-  // deux nombres au même instant et fixe l'heure de la révélation commune (horloges recalées sur celle du serveur).
-  // Premier à 3 manches (5 au plus). Ce sont des tirages normaux : historique, XP et classement.
+  // Un joueur crée une partie (2 à 10 joueurs ; premier à N manches, ou premier à un total d'XP) et donne le code.
+  // Tout le monde tire en même temps, manche par manche : le serveur tire tous les nombres au même instant et fixe
+  // l'heure de la révélation commune (horloges recalées sur celle du serveur). Ce sont des tirages normaux :
+  // historique, XP et classement. Une manche part toute seule 15 s après le premier joueur prêt.
   const roomHref = code => `#/room/${code}`;
   const ROOM_POLL_MS = 1500;
   const ROOM_IDLE_MS = 10 * 60000; // sans aucun changement pendant 10 min, on arrête de sonder (quota de la base)
+  const XP_TARGETS = [25000, 50000, 100000, 250000, 1000000];
   const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null, sig: '', changedAt: 0 };
+  const goalText = d => (d.mode === 'xp' ? `first to ${compact(d.target)} XP` : `first to ${plural(d.target, 'round win')}`);
+
+  // Derniers réglages choisis, retenus sur l'appareil.
+  function duelPrefs() {
+    const d = Store.settings.duel || {};
+    return {
+      size: Math.min(10, Math.max(2, Number(d.size) || 2)),
+      mode: d.mode === 'xp' ? 'xp' : 'rounds',
+      wins: Math.min(10, Math.max(1, Number(d.wins) || 3)),
+      xp: XP_TARGETS.includes(Number(d.xp)) ? Number(d.xp) : 50000,
+    };
+  }
+
+  function renderDuelHub() {
+    currentView = 'duel';
+    app.innerHTML = `
+      <div class="page">
+        <h1 class="page-title">Duel</h1>
+        <p class="panel-note profile-sub">Everyone rolls at the same time and all numbers are revealed together, digit by digit. Duel rolls are normal rolls: they stay in your history and count on the leaderboard.</p>
+        <div class="grid-2">
+          <div class="panel">
+            <div class="panel-head"><h3 class="panel-title">Create a game</h3></div>
+            <div id="d-setup"></div>
+            <button class="btn-roll small" id="d-create">⚔️ Create the game</button>
+          </div>
+          <div class="panel">
+            <div class="panel-head"><h3 class="panel-title">Join a game</h3></div>
+            <form class="duel-join" id="d-join">
+              <input class="input mono" id="d-code" maxlength="5" placeholder="CODE" autocomplete="off" autocapitalize="characters" spellcheck="false" aria-label="Duel code">
+              <button class="btn" type="submit">Join</button>
+            </form>
+            <p class="panel-note">Ask the host for the 5-character code, or open the link they share.</p>
+          </div>
+        </div>
+      </div>`;
+    const drawSetup = () => {
+      const p = duelPrefs();
+      const seg = (id, values, current, label = v => v) => `<div class="seg wrap" data-pref="${id}">${values.map(v => `<button data-v="${v}" class="${v === current ? 'on' : ''}">${label(v)}</button>`).join('')}</div>`;
+      $('#d-setup').innerHTML = `
+        <div class="field"><label>Players</label>${seg('size', [2, 3, 4, 5, 6, 7, 8, 9, 10], p.size)}</div>
+        <div class="field"><label>How to win</label>${seg('mode', ['rounds', 'xp'], p.mode, v => (v === 'xp' ? 'XP race' : 'Rounds'))}</div>
+        ${p.mode === 'xp'
+          ? `<div class="field"><label>First to reach (XP)</label>${seg('xp', XP_TARGETS, p.xp, v => compact(v))}</div>`
+          : `<div class="field"><label>Round wins needed</label>${seg('wins', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], p.wins)}</div>`}
+        <p class="panel-note">${p.size} players · ${goalText({ mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins })} · each round goes to the highest roll</p>`;
+    };
+    drawSetup();
+    $('#d-setup').addEventListener('click', e => {
+      const btn = e.target.closest('[data-pref] button');
+      if (!btn) return;
+      const key = btn.parentElement.dataset.pref;
+      Store.setSetting('duel', { ...duelPrefs(), [key]: key === 'mode' ? btn.dataset.v : Number(btn.dataset.v) });
+      drawSetup();
+    });
+    $('#d-create').addEventListener('click', createRoom);
+    $('#d-join').addEventListener('submit', e => { e.preventDefault(); joinRoom($('#d-code').value); });
+  }
 
   function roomError(err, retry) {
     if (err.status === 409) { askName(retry, '', `"${Store.player.name}" is already taken by another player. Pick a new name.`); return; }
@@ -1625,8 +1683,9 @@
 
   async function createRoom() {
     if (!Store.player.name) { askName(createRoom); return; }
+    const p = duelPrefs();
     try {
-      const d = await Online.roomAction('create');
+      const d = await Online.roomAction('create', null, { size: p.size, mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins });
       location.hash = roomHref(d.code);
     } catch (err) {
       roomError(err, createRoom);
@@ -1645,17 +1704,21 @@
     }
   }
 
-  async function roomReady() {
-    const btn = $('#room-roll');
-    if (!btn || btn.disabled) return;
-    btn.disabled = true;
+  // Envoie une action (prêt, lancement) et applique aussitôt l'état renvoyé.
+  async function roomSend(action, btn) {
+    if (btn) btn.disabled = true;
     const token = Room.token, sent = Date.now();
     try {
-      applyRoom(await Online.roomAction('ready', Room.code), token, sent, Date.now());
+      applyRoom(await Online.roomAction(action, Room.code), token, sent, Date.now());
     } catch (err) {
-      btn.disabled = false;
-      roomError(err, roomReady);
+      if (btn) btn.disabled = false;
+      roomError(err, () => roomSend(action));
     }
+  }
+
+  function roomReady() {
+    const btn = $('#room-roll');
+    if (btn && !btn.disabled) roomSend('ready', btn);
   }
 
   async function roomRematch() {
@@ -1682,14 +1745,14 @@
     Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null, sig: '', changedAt: Date.now() });
     app.innerHTML = `
       <div class="page page-wide">
-        <a class="back-link" href="#/">← Home</a>
+        <a class="back-link" href="#/duel">← Duel</a>
         <h1 class="page-title">Live duel <span class="muted mono">${esc(Room.code)}</span></h1>
         <div id="room-body"><div class="empty">Loading…</div></div>
       </div>`;
     pollRoom(Room.token);
   }
 
-  // Sondé toutes les 1,5 s tant que le duel n'est pas fini et que l'onglet est visible.
+  // Sondé toutes les 1,5 s (3 s pendant une révélation) tant que la partie n'est pas finie et que l'onglet est visible.
   async function pollRoom(token) {
     clearTimeout(Room.timer);
     const sent = Date.now();
@@ -1703,7 +1766,7 @@
       }
     }
     if (token !== Room.token || currentView !== 'room' || document.hidden) return;
-    // Onglet oublié ouvert (ami qui ne vient pas, adversaire parti) : pause au bout de 10 min sans changement.
+    // Onglet oublié ouvert (joueurs qui ne viennent pas, partie abandonnée) : pause au bout de 10 min sans changement.
     if (Date.now() - Room.changedAt > ROOM_IDLE_MS) {
       if (!$('#room-idle')) {
         $('#room-body').insertAdjacentHTML('beforeend', '<p class="room-wait" id="room-idle" style="animation:none">Paused after 10 minutes without activity. <button class="btn" id="room-resume">Resume</button></p>');
@@ -1711,10 +1774,10 @@
       }
       return;
     }
-    // Duel fini : sondé plus lentement, seulement pour voir arriver la revanche de l'adversaire.
+    // Partie finie : sondée plus lentement, seulement pour voir arriver la revanche.
     const d = Room.data;
-    if (!d || d.status !== 'done') Room.timer = setTimeout(() => pollRoom(token), ROOM_POLL_MS);
-    else if (!d.next && d.players.some(p => p && p.me)) Room.timer = setTimeout(() => pollRoom(token), 3000);
+    if (!d || d.status !== 'done') Room.timer = setTimeout(() => pollRoom(token), Room.anim ? 3000 : ROOM_POLL_MS);
+    else if (!d.next && d.players.some(p => p.me)) Room.timer = setTimeout(() => pollRoom(token), 3000);
   }
 
   function applyRoom(d, token, sent, got) {
@@ -1724,13 +1787,13 @@
       Room.rtt = got - sent;
       Room.offset = d.now - (sent + got) / 2;
     }
-    const sig = JSON.stringify([d.status, d.rounds.length, d.players.map(p => p && p.ready), d.next]);
+    const sig = JSON.stringify([d.status, d.players.length, d.rounds.length, d.players.map(p => p.ready), d.next]);
     if (sig !== Room.sig) {
       Room.sig = sig;
       Room.changedAt = Date.now();
     }
     if (!Room.data) {
-      // Arrivée en cours de duel : les manches déjà finies s'affichent sans animation.
+      // Arrivée en cours de partie : les manches déjà finies s'affichent sans animation.
       Room.shown = d.rounds.filter(r => r.revealAt - Room.offset + roundLength() < Date.now()).length;
     }
     Room.data = d;
@@ -1740,21 +1803,22 @@
 
   // Durée d'une révélation : les chiffres au rythme d'origine, puis l'XP et le gagnant de la manche.
   const roundLength = () => REVEAL.digitStart + Array.from({ length: 5 }, (_, i) => digitDelay(i, 6)).reduce((x, y) => x + y, 0) + 1500;
+  const serverNow = () => Date.now() + Room.offset;
 
   // Score affiché : seulement les manches déjà révélées à l'écran.
   function shownScore() {
-    const d = Room.data, wins = [0, 0], totals = [0, 0];
+    const d = Room.data, count = d.players.length;
+    const wins = Array(count).fill(0), totals = Array(count).fill(0);
     d.rounds.slice(0, Room.shown).forEach(r => {
-      totals[0] += r.a.s;
-      totals[1] += r.b.s;
+      r.s.forEach((v, i) => { totals[i] += v; });
       if (r.winner !== null) wins[r.winner]++;
     });
     return { wins, totals };
   }
 
-  // Ne remplace le contenu que s'il a changé : redessiner le bouton à chaque sondage pourrait avaler un clic.
+  // Ne remplace le contenu que s'il a changé : redessiner un bouton à chaque sondage pourrait avaler un clic.
   function setHTML(el, html) {
-    if (el.dataset.html === html) return false;
+    if (!el || el.dataset.html === html) return false;
     el.innerHTML = html;
     el.dataset.html = html;
     return true;
@@ -1763,115 +1827,140 @@
   function drawRoom() {
     const d = Room.data, body = $('#room-body');
     if (!body) return;
-    const [pa, pb] = d.players;
+    const me = d.players.find(p => p.me);
 
-    if (d.status === 'waiting') {
-      if (Room.view === 'waiting') return;
-      Room.view = 'waiting';
-      body.innerHTML = `
-        <div class="room-code-box">
-          <div class="eyebrow">Duel code</div>
-          <div class="room-code mono">${esc(d.code)}</div>
-          ${pa.me
-            ? `<p class="panel-note">Send this code to a friend: they type it on the home page, or open the link.</p>
-               <button class="btn" id="room-share">Share invite</button>`
-            : `<p class="panel-note"><b>${esc(pa.name)}</b> is waiting for an opponent.</p>
-               <button class="btn-roll small" id="room-join">⚔️ Join the duel</button>`}
+    if (d.status === 'lobby') {
+      if (Room.view !== 'lobby') {
+        Room.view = 'lobby';
+        body.innerHTML = '<div class="room-code-box" id="room-lobby"></div>';
+      }
+      const host = d.players.find(p => p.host);
+      const seats = d.players.map(p => `<span class="badge-pill">${p.host ? '👑 ' : ''}${esc(p.name)}${p.me ? ' (you)' : ''}</span>`).join('')
+        + '<span class="badge-pill empty-seat">…</span>'.repeat(Math.max(0, d.size - d.players.length));
+      const wait = !me ? '' : me.host
+        ? (d.players.length > 1 ? 'Start now, or wait: the game starts by itself when it is full' : 'Waiting for players…')
+        : `Waiting for ${esc(host.name)} to start (or for the game to fill up)…`;
+      const html = `
+        <div class="eyebrow">Duel code</div>
+        <div class="room-code mono">${esc(d.code)}</div>
+        <p class="panel-note">${d.size} players · ${goalText(d)} · each round goes to the highest roll</p>
+        <div class="pill-row room-seats">${seats}</div>
+        <p class="panel-note">${d.players.length} / ${d.size} players</p>
+        <div class="room-buttons">
+          ${me ? '<button class="btn" id="room-share">Share invite</button>' : '<button class="btn-roll small" id="room-join">⚔️ Join</button>'}
+          ${me && me.host && d.players.length > 1 ? `<button class="btn-roll small" id="room-start">Start now with ${d.players.length}</button>` : ''}
         </div>
-        ${pa.me ? '<p class="room-wait">Waiting for your opponent…</p>' : ''}`;
-      const shareBtn = $('#room-share');
-      if (shareBtn) shareBtn.addEventListener('click', () => shareOrCopy(`⚔️ Live duel on RNG∞, code ${d.code}\n${location.origin + location.pathname + roomHref(d.code)}`, 'Duel invite'));
-      const joinBtn = $('#room-join');
-      if (joinBtn) joinBtn.addEventListener('click', () => joinRoom(d.code));
+        ${wait ? `<p class="room-wait">${wait}</p>` : ''}`;
+      if (setHTML($('#room-lobby'), html)) {
+        const share = $('#room-share');
+        if (share) share.addEventListener('click', () => shareOrCopy(`⚔️ Live duel on RNG∞ (${d.size} players, ${goalText(d)}), code ${d.code}\n${location.origin + location.pathname + roomHref(d.code)}`, 'Duel invite'));
+        const join = $('#room-join');
+        if (join) join.addEventListener('click', () => joinRoom(d.code));
+        const start = $('#room-start');
+        if (start) start.addEventListener('click', () => roomSend('start', start));
+      }
       return;
     }
 
     if (Room.view !== 'playing') {
       Room.view = 'playing';
       body.innerHTML = `
-        <p class="panel-note profile-sub">First to ${d.toWin} rounds (${d.maxRounds} max) · each round goes to the higher roll · duel rolls count on the leaderboard</p>
-        <div class="room-score" id="room-score"></div>
-        <div class="room-stage" id="room-stage"></div>
-        <div class="room-actions" id="room-actions"></div>
+        <p class="panel-note profile-sub">${d.players.length} players · ${goalText(d)} · each round goes to the highest roll · duel rolls count on the leaderboard</p>
+        <div class="room-board" id="room-board"></div>
+        <div class="room-stage${d.players.length > 2 ? ' many' : ''}" id="room-stage"></div>
+        <div class="room-actions"><div id="room-cta"></div><p class="hint" id="room-hint"></p></div>
         <div class="panel"><div class="panel-head"><h3 class="panel-title">Rounds</h3></div><div id="room-rounds"></div></div>`;
       if (!Room.anim) $('#room-stage').innerHTML = stageHTML(Room.shown ? d.rounds[Room.shown - 1] : null);
     }
 
+    // Classement de la partie : manches gagnées (puis XP), ou barre de progression vers le palier d'XP.
     const { wins, totals } = shownScore();
-    const player = (p, i) => `
-      <div class="room-player${i ? ' right' : ''}">
-        <a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>${p.me ? ' <span class="muted">(you)</span>' : ''}
-        <div class="panel-note">${fmt(totals[i])} XP${d.status === 'playing' && p.ready && !Room.anim ? ' · <span class="ready-chip">ready</span>' : ''}</div>
-      </div>`;
-    setHTML($('#room-score'), `${player(pa, 0)}<div class="room-wins mono">${wins[0]} – ${wins[1]}</div>${player(pb, 1)}`);
+    const order = d.players.map((p, i) => i).sort((x, y) => (d.mode === 'xp' ? totals[y] - totals[x] : wins[y] - wins[x] || totals[y] - totals[x]));
+    setHTML($('#room-board'), order.map((i, k) => {
+      const p = d.players[i];
+      const metric = d.mode === 'xp'
+        ? `<span class="xp-bar"><span style="width:${Math.min(100, (totals[i] / d.target) * 100)}%"></span></span><span class="mono">${compact(totals[i])} / ${compact(d.target)}</span>`
+        : `<span class="mono board-wins">${wins[i]} / ${d.target}</span><span class="panel-note">${compact(totals[i])} XP</span>`;
+      const ready = d.status === 'playing' && p.ready && !Room.anim ? '<span class="ready-chip">ready</span>' : '';
+      return `<div class="board-row${p.me ? ' me' : ''}"><span class="rank">${k + 1}</span><a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
+    }).join(''));
 
-    const me = d.players.find(p => p.me), opp = d.players.find(p => !p.me);
     const finished = d.status === 'done' && Room.shown === d.rounds.length && !Room.anim;
-    let actions;
+    const readyCount = d.players.filter(p => p.ready).length;
+    const countdown = d.autoAt ? ` · starts by itself in ${Math.max(0, Math.ceil((d.autoAt - serverNow()) / 1000))} s` : '';
+    let cta, hint = '';
     if (finished) {
       const w = d.winner;
-      const how = w === null ? '' : ` ${wins[w]}–${wins[1 - w]}${wins[0] === wins[1] ? ' on total XP' : ''}`;
+      const how = w === null ? '' : d.mode === 'xp' ? ` with ${fmt(totals[w])} XP` : ` with ${plural(wins[w], 'round')}`;
       const banner = w === null ? '🤝 Draw' : d.players[w].me ? `🏆 You win${how}` : `🏆 ${esc(d.players[w].name)} wins${how}`;
       const rematch = !me ? ''
-        : d.next ? `<button class="btn-roll small" id="room-rematch">🔁 ${d.players[d.nextBy] === me ? 'Back to the rematch' : `${esc(opp.name)} wants a rematch: play`}</button>`
+        : d.next ? `<button class="btn-roll small" id="room-rematch">🔁 ${d.nextBy === me.name ? 'Back to the rematch' : `${esc(d.nextBy)} wants a rematch: play`}</button>`
         : '<button class="btn-roll small" id="room-rematch">🔁 Rematch</button>';
-      actions = `<div class="room-result">${banner}</div>
-        <div class="room-buttons">${rematch}<a class="btn" href="#/">Home</a></div>`;
+      cta = `<div class="room-result">${banner}</div><div class="room-buttons">${rematch}<a class="btn" href="#/duel">New game</a></div>`;
     } else if (Room.anim) {
-      actions = `<p class="room-wait">Round ${Room.shown + 1}…</p>`;
+      cta = `<p class="room-wait">Round ${Room.shown + 1}…</p>`;
     } else if (!me) {
-      actions = '<p class="room-wait">Watching live</p>';
+      cta = '<p class="room-wait">Watching live</p>';
+      hint = `${readyCount} / ${d.players.length} ready${countdown}`;
     } else if (me.ready) {
-      actions = `<p class="room-wait">Waiting for ${esc(opp.name)} to roll…</p>`;
+      const missing = d.players.filter(p => !p.ready).map(p => p.name);
+      cta = `<p class="room-wait">Waiting for ${missing.length <= 3 ? esc(missing.join(', ')) : `${missing.length} players`}…</p>`;
+      hint = `${readyCount} / ${d.players.length} ready${countdown}`;
     } else {
-      actions = `<button class="btn-roll" id="room-roll">🎲 Roll round ${d.rounds.length + 1}</button>
-        <p class="hint">${opp.ready ? `<b>${esc(opp.name)}</b> is ready · ` : ''}press <kbd>Space</kbd></p>`;
+      cta = `<button class="btn-roll" id="room-roll">🎲 Roll round ${d.rounds.length + 1}</button>`;
+      hint = `${readyCount ? `${readyCount} / ${d.players.length} ready${countdown} · ` : ''}press <kbd>Space</kbd>`;
     }
-    if (setHTML($('#room-actions'), actions)) {
-      const rollBtn = $('#room-roll');
-      if (rollBtn) rollBtn.addEventListener('click', roomReady);
+    if (setHTML($('#room-cta'), cta)) {
+      const roll = $('#room-roll');
+      if (roll) roll.addEventListener('click', roomReady);
       const rematchBtn = $('#room-rematch');
-      if (rematchBtn) rematchBtn.addEventListener('click', () => roomRematch());
+      if (rematchBtn) rematchBtn.addEventListener('click', roomRematch);
     }
+    setHTML($('#room-hint'), hint);
 
-    setHTML($('#room-rounds'), Room.shown ? d.rounds.slice(0, Room.shown).map((r, i) => {
-      const cell = (x, j) => {
-        const a = analysis(x.n);
-        return `<span class="num-card sm${r.winner === j ? ' round-won' : ''}" data-tier="${a.tier}" data-number="${x.n}" data-caption="${esc(`${d.players[j].name} · round ${i + 1}`)}" style="cursor:pointer">${a.str}</span>`;
-      };
-      const who = r.winner === null ? 'tie' : esc(d.players[r.winner].name);
-      return `<div class="room-round"><span class="rank">${i + 1}</span>${cell(r.a, 0)}<span class="muted">vs</span>${cell(r.b, 1)}<span class="room-round-winner">${r.winner === null ? '' : '🏆 '}${who}</span></div>`;
-    }).join('') : '<div class="empty">No round yet.</div>');
+    // Manches : le gagnant et son nombre, plus le mien si ce n'est pas moi.
+    const mine = d.players.findIndex(p => p.me);
+    const numberCard = (r, j, i) => {
+      const a = analysis(r.n[j]);
+      return `<span class="num-card sm" data-tier="${a.tier}" data-number="${r.n[j]}" data-caption="${esc(`${d.players[j].name} · round ${i + 1}`)}" style="cursor:pointer">${a.str}</span>`;
+    };
+    setHTML($('#room-rounds'), Room.shown ? d.rounds.slice(0, Room.shown).map((r, i) => `
+      <div class="room-round">
+        <span class="rank">${i + 1}</span>
+        ${r.winner === null ? '<span class="muted">tie at the top</span>' : `${numberCard(r, r.winner, i)}<span>🏆 ${esc(d.players[r.winner].name)} · ${compact(r.s[r.winner])} XP</span>`}
+        ${mine >= 0 && mine !== r.winner ? `<span class="room-round-mine">you: ${numberCard(r, mine, i)}</span>` : ''}
+      </div>`).join('') : '<div class="empty">No round yet.</div>');
   }
 
-  // Scène : les deux cartes côte à côte. Sans manche : "??????" ; sinon la manche révélée, avec son gagnant.
+  // Scène : une carte par joueur. Sans manche : "??????" ; sinon la manche révélée, avec son gagnant.
   function stageHTML(r, spinning = false) {
     const d = Room.data;
-    return d.players.map((p, j) => {
-      const x = r && (j ? r.b : r.a);
-      const a = x && !spinning ? analysis(x.n) : null;
+    const sides = d.players.map((p, j) => {
+      const a = r && !spinning ? analysis(r.n[j]) : null;
+      const won = a && r.winner === j;
       const card = a
-        ? `<div class="num-card md" data-tier="${a.tier}" data-number="${x.n}" data-caption="${esc(p.name)}" style="cursor:pointer">${a.str}</div>`
+        ? `<div class="num-card md" data-tier="${a.tier}" data-number="${r.n[j]}" data-caption="${esc(p.name)}" style="cursor:pointer">${a.str}</div>`
         : `<div class="num-card md neutral${spinning ? ' charging' : ''}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
       return `
-        <div class="room-side${a && r.winner === j ? ' won' : ''}" id="rs-${j}">
-          <div class="room-name">${a && r.winner === j ? '🏆 ' : ''}${esc(p.name)}</div>
+        <div class="room-side${won ? ' won' : ''}${p.me ? ' me' : ''}" id="rs-${j}">
+          <div class="room-name">${won ? '🏆 ' : ''}${esc(p.name)}</div>
           ${card}
           <div class="room-meta" id="rm-${j}">${a ? `${tierPill(a.tier)}<span class="ep-pill">${fmt(a.total)} XP</span>` : ''}</div>
-          <div class="pill-row" id="rb-${j}">${a ? a.groups.slice(0, 3).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('') : ''}</div>
+          <div class="pill-row" id="rb-${j}">${a ? a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('') : ''}</div>
         </div>`;
-    }).join('<div class="room-vs">VS</div>');
+    });
+    return d.players.length === 2 ? sides.join('<div class="room-vs">VS</div>') : sides.join('');
   }
 
-  // Révélation d'une manche, en même temps chez les deux joueurs : les chiffres des deux cartes tombent ensemble.
+  // Révélation d'une manche, en même temps chez tous les joueurs : les chiffres de toutes les cartes tombent ensemble.
   function playRound(i) {
     const d = Room.data, r = d.rounds[i];
     const stage = $('#room-stage');
     if (!stage) return;
-    const sides = [r.a, r.b].map(x => ({ ...x, a: analysis(x.n) }));
+    const sides = r.n.map((n, j) => ({ n, s: r.s[j], a: analysis(n) }));
     const slotCount = Math.max(6, ...sides.map(x => x.a.str.length));
     stage.innerHTML = stageHTML(r, true);
-    const cards = [0, 1].map(j => $(`#rc-${j}`));
+    const cards = sides.map((x, j) => $(`#rc-${j}`));
     cards.forEach(c => { c.innerHTML = Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join(''); });
     const slots = cards.map(c => Array.from(c.querySelectorAll('.slot')));
     const padded = sides.map(x => x.a.str.padStart(slotCount, '0'));
@@ -1910,7 +1999,7 @@
         cards[j].dataset.tier = x.a.tier;
         $(`#rm-${j}`).innerHTML = `${tierPill(x.a.tier)}<span class="ep-pill">0 XP</span>`;
         countUp($(`#rm-${j} .ep-pill`), 0, x.s, reducedMotion ? 0 : 700, v => `${fmt(v)} XP`);
-        $(`#rb-${j}`).innerHTML = x.a.groups.slice(0, 3).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('');
+        $(`#rb-${j}`).innerHTML = x.a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('');
         FX.celebrate(x.a.tier, cards[j]);
       });
     });
@@ -1928,6 +2017,7 @@
     Room.anim = { cancel() { timers.forEach(clearTimeout); clearInterval(spin); } };
     drawRoom();
   }
+
   // ---------------------------------------------------------------- leaderboard / à propos
   // Classement du meilleur tirage de chaque joueur (tirages illimités : l'XP total récompenserait juste le plus gros cliqueur).
   const lbState = { period: 'day' };
@@ -2018,7 +2108,7 @@
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
-        <p>Live duel: create a duel on the home page and send the code to a friend. You both roll at the same time and see both numbers revealed together; each round goes to the higher roll, first to 3 rounds wins. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
+        <p>Duel (top menu): create a game for 2 to 10 players and send the code. Everyone rolls at the same time and all numbers are revealed together; each round goes to the highest roll. Win by being first to 1–10 round wins, or first to an XP total. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
         <p class="muted">Based on the daily game <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>: this version removes the daily limit and adds history, stats, Google sign-in and a leaderboard between friends.</p>
         <p class="muted"><a href="privacy.html">Privacy policy</a></p>
@@ -2027,7 +2117,7 @@
   }
 
   // ---------------------------------------------------------------- navigation, thème, clavier
-  const ROUTES = { '': renderHome, history: renderHistory, stats: renderStats, badges: renderBadges, leaderboard: renderLeaderboard, about: renderAbout };
+  const ROUTES = { '': renderHome, history: renderHistory, stats: renderStats, badges: renderBadges, leaderboard: renderLeaderboard, about: renderAbout, duel: renderDuelHub };
 
   function route() {
     if (session && !session.finished) session.cancel();
@@ -2040,7 +2130,7 @@
     if (key === 'player' && rest.length) renderProfile(decodeURIComponent(rest.join('/')));
     else if (key === 'room' && rest.length) renderRoom(rest[0]);
     else (ROUTES[key] || renderHome)();
-    const navKey = key === 'player' ? 'leaderboard' : key;
+    const navKey = key === 'player' ? 'leaderboard' : key === 'room' ? 'duel' : key;
     document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navKey));
     window.scrollTo(0, 0);
   }

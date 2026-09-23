@@ -259,96 +259,123 @@ assert.equal((await call(profile, { url: '/api/profile?name=Nobody' })).status, 
 assert.equal((await call(profile, { url: '/api/profile' })).status, 400);
 assert.equal((await call(profile, { method: 'POST' })).status, 405);
 
-// 12. Duel en direct : un code, deux joueurs prêts → deux tirages au même instant, comptés comme des tirages normaux.
+// 12. Duel en direct : un code, 2 à 10 joueurs, tous les tirages d'une manche au même instant, comptés comme des
+// tirages normaux ; mode manches (premier à N) ou course à l'XP.
 const roomApi = require(path.join(ROOT, 'api/room.js'));
-const roomPost = (who, action, code) => call(roomApi, { method: 'POST', body: { ...who, action, code } });
+const roomPost = (who, action, extra = {}) => call(roomApi, { method: 'POST', body: { ...who, action, ...extra } });
 const roomGet = (code, who) => call(roomApi, { url: `/api/room?code=${code}${who ? `&me=${who.playerId}` : ''}` });
 const bobNow = { ...bob, name: 'Sacha' };
 const carol = { playerId: 'd'.repeat(16), secret: '4'.repeat(32), name: 'Carol' };
+const dave = { playerId: 'e'.repeat(16), secret: '5'.repeat(32), name: 'Dave' };
+let clock = 0;
+const later = async (ms, fn) => { clock += ms; Date.now = () => realNow() + clock; try { return await fn(); } finally { Date.now = realNow; } };
 
-r = await roomPost(alice, 'create');
+// Règles bornées : 2 à 10 joueurs, 1 à 10 manches, paliers d'XP connus.
+r = await roomPost(dave, 'create', { size: 50, mode: 'rounds', target: 99 });
+assert.deepEqual([r.body.size, r.body.mode, r.body.target], [10, 'rounds', 10]);
+r = await roomPost(dave, 'create', { size: 1, mode: 'xp', target: 12345 });
+assert.deepEqual([r.body.size, r.body.mode, r.body.target], [2, 'xp', 50000]);
+
+// Partie à 3, premier à 2 manches : elle démarre toute seule quand la salle est pleine.
+r = await roomPost(alice, 'create', { size: 3, mode: 'rounds', target: 2 });
 assert.equal(r.status, 200, JSON.stringify(r.body));
 const code = r.body.code;
 assert.match(code, /^[A-Z2-9]{5}$/);
-assert.equal(r.body.status, 'waiting');
-assert.equal(r.body.players[1], null);
-assert.equal((await roomPost(alice, 'ready', code)).status, 422, 'seul, on ne peut pas tirer');
-assert.equal((await roomPost(bobNow, 'join', 'ZZZZZ')).status, 404);
-r = await roomPost(bobNow, 'join', code.toLowerCase());
-assert.equal(r.status, 200, JSON.stringify(r.body));
-assert.equal(r.body.status, 'playing');
-assert.deepEqual(r.body.players.map(p => [p.name, p.me]), [['Alice', false], ['Sacha', true]]);
-assert.ok(!JSON.stringify(r.body).includes(alice.playerId) && !JSON.stringify(r.body).includes(bob.playerId), 'aucun id');
-assert.equal((await roomPost(carol, 'join', code)).status, 422, 'salle pleine');
-assert.equal((await roomPost(carol, 'ready', code)).status, 422, 'un spectateur ne tire pas');
-assert.equal((await roomPost(bobNow, 'join', code)).status, 200, 'revenir dans sa salle');
+assert.deepEqual([r.body.status, r.body.players.length, r.body.players[0].host], ['lobby', 1, true]);
+assert.equal((await roomPost(alice, 'ready', { code })).status, 422, 'pas de manche avant le début');
+assert.equal((await roomPost(bobNow, 'join', { code: 'ZZZZZ' })).status, 404);
+r = await roomPost(bobNow, 'join', { code: code.toLowerCase() });
+assert.deepEqual([r.body.status, r.body.players.length], ['lobby', 2]);
+assert.equal((await roomPost(bobNow, 'join', { code })).body.players.length, 2, 'rejoindre deux fois ne duplique pas');
+assert.equal((await roomPost(bobNow, 'start', { code })).status, 422, 'seul l\'hôte lance la partie');
+r = await roomPost(carol, 'join', { code });
+assert.equal(r.body.status, 'playing', 'salle pleine : la partie commence');
+assert.deepEqual(r.body.players.map(p => [p.name, p.me]), [['Alice', false], ['Sacha', false], ['Carol', true]]);
+assert.ok(![alice, bob, carol].some(p => JSON.stringify(r.body).includes(p.playerId)), 'aucun id');
+assert.equal((await roomPost(dave, 'join', { code })).status, 422, 'partie commencée : plus de place');
+assert.equal((await roomPost(dave, 'ready', { code })).status, 422, 'un spectateur ne tire pas');
 
-// Manche 1 : Alice prête seule → rien ; Sacha prêt → les deux nombres sont tirés ensemble.
+// Manche 1 : tant que tout le monde n'est pas prêt, rien ; le dernier prêt déclenche les 3 tirages ensemble.
 const histA = (await call(history, { method: 'POST', body: aliceTab })).body.rolls.length;
-const countA = (await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Alice').rolls;
-r = await roomPost(alice, 'ready', code);
+const countOf = async name => (await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === name).rolls;
+const countA = await countOf('Alice');
+await roomPost(alice, 'ready', { code });
+r = await roomPost(bobNow, 'ready', { code });
 assert.equal(r.body.rounds.length, 0);
-assert.deepEqual(r.body.players.map(p => p.ready), [true, false]);
-r = await roomPost(bobNow, 'ready', code);
-assert.equal(r.body.rounds.length, 1, 'le 2e joueur prêt déclenche la manche');
+assert.deepEqual(r.body.players.map(p => p.ready), [true, true, false]);
+assert.ok(r.body.autoAt > Date.now(), 'départ automatique annoncé');
+r = await roomPost(carol, 'ready', { code });
+assert.equal(r.body.rounds.length, 1, 'le dernier prêt déclenche la manche');
 const round1 = r.body.rounds[0];
-assert.equal(round1.a.s, engine.scoreOf(round1.a.n));
-assert.equal(round1.b.s, engine.scoreOf(round1.b.n));
-assert.equal(round1.revealAt - round1.t, 2500, 'révélation commune 2,5 s plus tard');
-assert.deepEqual(r.body.players.map(p => p.ready), [false, false]);
-r = await call(history, { method: 'POST', body: aliceTab });
-assert.equal(r.body.rolls.length, histA + 1, 'la manche est dans l\'historique');
-assert.ok(r.body.rolls.some(([n, t]) => n === round1.a.n && t === round1.t));
-r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
-assert.equal(r.body.entries.find(e => e.name === 'Alice').rolls, countA + 1, 'et compte au classement');
+assert.equal(round1.n.length, 3);
+assert.deepEqual(round1.s, round1.n.map(n => engine.scoreOf(n)));
+assert.equal(round1.revealAt - round1.t, 2500);
+assert.equal((await call(history, { method: 'POST', body: aliceTab })).body.rolls.length, histA + 1, 'dans l\'historique');
+assert.equal(await countOf('Alice'), countA + 1, 'et au classement');
 
-// 8 s minimum entre deux manches : prêts trop tôt, la manche attend ; le sondage (GET) la lance ensuite.
-await roomPost(alice, 'ready', code);
-assert.equal((await roomPost(alice, 'ready', code)).body.rounds.length, 1, 'être prêt deux fois ne tire rien');
-r = await roomPost(bobNow, 'ready', code);
-assert.equal(r.body.rounds.length, 1, 'trop tôt');
-let clock = 11000;
-Date.now = () => realNow() + clock;
-r = await roomGet(code);
-Date.now = realNow;
-assert.equal(r.body.rounds.length, 2, 'le sondage lance la manche une fois le délai passé');
-assert.ok(r.body.players.every(p => !p.me), 'spectateur');
+// Manche 2 : seule Alice est prête ; 15 s plus tard, le sondage lance la manche pour tout le monde.
+await later(11000, () => roomPost(alice, 'ready', { code }));
+r = await later(1000, () => roomGet(code));
+assert.equal(r.body.rounds.length, 1, 'on attend encore les autres');
+r = await later(15000, () => roomGet(code));
+assert.equal(r.body.rounds.length, 2, 'départ automatique après 15 s');
+assert.equal(r.body.rounds[1].n.length, 3, 'les absents tirent aussi');
 
-// Jusqu'à la fin : premier à 3 manches, 5 au plus, égalité départagée au total d'XP.
+// Jusqu'à la fin : premier à 2 manches gagnées.
 let state = r.body;
 while (state.status === 'playing') {
-  clock += 11000;
-  Date.now = () => realNow() + clock;
-  await roomPost(alice, 'ready', code);
-  state = (await roomPost(bobNow, 'ready', code)).body;
-  Date.now = realNow;
+  await later(11000, async () => {
+    await roomPost(alice, 'ready', { code });
+    await roomPost(bobNow, 'ready', { code });
+    state = (await roomPost(carol, 'ready', { code })).body;
+  });
 }
-const wins = [0, 0], totals = [0, 0];
+const wins = [0, 0, 0];
 for (const x of state.rounds) {
-  totals[0] += x.a.s;
-  totals[1] += x.b.s;
-  if (x.a.s !== x.b.s) wins[x.a.s > x.b.s ? 0 : 1]++;
+  const top = Math.max(...x.s);
+  if (x.s.filter(v => v === top).length === 1) wins[x.s.indexOf(top)]++;
 }
-assert.ok(Math.max(...wins) === 3 || state.rounds.length === 5, `fin : ${wins} en ${state.rounds.length} manches`);
 assert.deepEqual(state.players.map(p => p.wins), wins);
-const expectedWinner = wins[0] !== wins[1] ? (wins[0] > wins[1] ? 0 : 1) : totals[0] !== totals[1] ? (totals[0] > totals[1] ? 0 : 1) : null;
-assert.equal(state.winner, expectedWinner);
-assert.equal((await roomPost(alice, 'ready', code)).status, 422, 'duel fini');
+assert.equal(Math.max(...wins), 2);
+assert.equal(state.winner, wins.indexOf(2));
+assert.equal((await roomPost(alice, 'ready', { code })).status, 422, 'partie finie');
 
-// Revanche : une seule nouvelle salle, les deux joueurs déjà dedans, la partie commence tout de suite.
-assert.equal((await roomPost(carol, 'rematch', code)).status, 422, 'un spectateur ne lance pas de revanche');
-r = await roomPost(bobNow, 'rematch', code);
-assert.equal(r.status, 200, JSON.stringify(r.body));
+// Revanche : une seule nouvelle salle, mêmes joueurs et mêmes règles, qui commence tout de suite.
+assert.equal((await roomPost(dave, 'rematch', { code })).status, 422, 'un spectateur ne lance pas de revanche');
+r = await roomPost(bobNow, 'rematch', { code });
 const rematch = r.body.code;
 assert.notEqual(rematch, code);
-assert.equal(r.body.status, 'playing');
-assert.deepEqual(r.body.players.map(p => [p.name, p.me]), [['Sacha', true], ['Alice', false]]);
-assert.equal((await roomPost(alice, 'rematch', code)).body.code, rematch, 'la même revanche pour les deux');
+assert.deepEqual([r.body.status, r.body.mode, r.body.target, r.body.players.length], ['playing', 'rounds', 2, 3]);
+assert.equal((await roomPost(carol, 'rematch', { code })).body.code, rematch, 'la même revanche pour tous');
 r = await roomGet(code);
-assert.deepEqual([r.body.next, r.body.nextBy], [rematch, 1], 'l\'ancienne salle indique la revanche et qui l\'a lancée');
-assert.equal((await roomPost(alice, 'rematch', rematch)).status, 422, 'pas de revanche avant la fin');
+assert.deepEqual([r.body.next, r.body.nextBy], [rematch, 'Sacha']);
+assert.equal((await roomPost(alice, 'rematch', { code: rematch })).status, 422, 'pas de revanche avant la fin');
+
+// Lancement anticipé par l'hôte, puis course à l'XP : le premier à 25 000 XP gagne.
+r = await roomPost(alice, 'create', { size: 5, mode: 'xp', target: 25000 });
+const race = r.body.code;
+assert.equal((await roomPost(alice, 'start', { code: race })).status, 422, 'pas seul');
+await roomPost(dave, 'join', { code: race });
+r = await roomPost(alice, 'start', { code: race });
+assert.deepEqual([r.body.status, r.body.size], ['playing', 2]);
+assert.equal((await roomPost(carol, 'join', { code: race })).status, 422, 'fermée aux nouveaux venus');
+state = r.body;
+while (state.status === 'playing') {
+  await later(11000, async () => {
+    await roomPost(alice, 'ready', { code: race });
+    state = (await roomPost(dave, 'ready', { code: race })).body;
+  });
+}
+const totals = [0, 0];
+state.rounds.forEach(x => { totals[0] += x.s[0]; totals[1] += x.s[1]; });
+assert.deepEqual(state.players.map(p => p.total), totals);
+assert.ok(Math.max(...totals) >= 25000);
+const beforeLast = totals.map((v, i) => v - state.rounds[state.rounds.length - 1].s[i]);
+assert.ok(Math.max(...beforeLast) < 25000, 'personne n\'avait atteint le palier avant la dernière manche');
+assert.equal(state.winner, totals[0] === totals[1] ? null : totals[0] > totals[1] ? 0 : 1);
+
 assert.equal((await roomGet('ZZZZZ')).status, 404);
-assert.equal((await call(roomApi, { method: 'POST', body: { ...alice, action: 'dance', code } })).status, 400);
+assert.equal((await roomPost(alice, 'dance', { code })).status, 400);
 assert.equal((await call(roomApi, { method: 'PUT' })).status, 405);
 
 // Profil : raretés et chance pour la comparaison.
