@@ -149,6 +149,9 @@
     const id = Shop.resolve(raw);
     return id && id !== 'classic' && Shop.byId.has(id) ? ` skin-${id}` : '';
   };
+  // Skin Slots : une manette sur le côté de la machine, qu'on abaisse au lancement (voir .slot-lever dans le CSS).
+  const LEVER = '<span class="slot-lever" aria-hidden="true"></span>';
+  const withLever = (card, raw) => (Shop.resolve(raw) === 'slots' ? `<span class="lever-wrap">${card}${LEVER}</span>` : card);
   const slotsHTML = str => str.split('').map(c => `<span class="slot">${c}</span>`).join('');
 
   // Skin Matrix : chaque carte reçoit un canvas derrière ses chiffres, avec des colonnes de caractères (katakana et
@@ -1138,7 +1141,7 @@
           <div class="card-stage" id="card-stage"><div class="rays" aria-hidden="true"></div>
           <div class="num-card lg neutral charging${skinClass(Store.settings.skin)}" id="num-card">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
-          </div></div>
+          </div>${Shop.resolve(Store.settings.skin) === 'slots' ? LEVER : ''}</div>
           <div class="result-meta invisible" id="r-meta">${tierPill(a.tier)}<span class="dot">•</span>${percentileHTML(a.percentile)}</div>
           <div class="ep-big pending" id="r-ep">??? XP</div>
           <div class="lifetime invisible" id="r-life">
@@ -2029,7 +2032,7 @@
         : `<button class="btn${state.coins >= k.price ? '' : ' disabled'}" data-skin-buy="${k.id}">🪙 ${fmt(k.price)}</button>`;
       return `
         <div class="skin-tile${equipped ? ' equipped' : ''}">
-          <div class="num-card md${skinClass(k.id)}" data-tier="rare">${slotsHTML('235711')}</div>
+          ${withLever(`<div class="num-card md${skinClass(k.id)}" data-tier="rare">${slotsHTML('235711')}</div>`, k.id)}
           <div class="skin-name"><b>${k.emoji} ${esc(k.name)}</b><span>${esc(k.desc)}</span></div>
           ${button}
         </div>`;
@@ -2399,9 +2402,9 @@
     const sides = d.players.map((p, j) => {
       const a = r && !spinning ? analysis(r.n[j]) : null;
       const won = a && r.winner === j;
-      const card = a
+      const card = withLever(a
         ? `<div class="num-card md${skinClass(p.skin)}" data-tier="${a.tier}" data-number="${r.n[j]}" data-caption="${esc(p.name)}" style="cursor:pointer">${slotsHTML(a.str)}</div>`
-        : `<div class="num-card md neutral${spinning ? ' charging' : ''}${skinClass(p.skin)}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
+        : `<div class="num-card md neutral${spinning ? ' charging' : ''}${skinClass(p.skin)}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`, p.skin);
       return `
         <div class="room-side${won ? ' won' : ''}${p.me ? ' me' : ''}${skinClass(p.skin).replace('skin-', 'side-')}" id="rs-${j}">
           <div class="room-name">${won ? '🏆 ' : ''}${p.bot ? '🤖 ' : ''}${esc(p.name)}${titleEmoji(p.title)}</div>

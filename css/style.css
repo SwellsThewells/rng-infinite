@@ -1324,3 +1324,34 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 
 /* Classement Lifetime XP : le total est la valeur classée, mis en avant. */
 .lb-ep.lifetime { color: var(--ep-text, var(--prose)); font-weight: 800; font-size: .86rem; }
+
+/* ================================================================== Slots : manette de machine à sous (2026-09-23)
+   Une tige chromée et sa boule rouge, fixées sur le flanc droit de la machine ; au lancement (.charging) elle s'abaisse
+   vers le joueur (retournement vertical autour de son pivot), marque l'arrêt, puis remonte avec un petit rebond. */
+.lever-wrap { position: relative; display: inline-flex; vertical-align: middle; }
+.slot-lever { position: absolute; left: 100%; bottom: 50%; width: .5em; height: 1.35em; margin-left: .04em; pointer-events: none; font-size: 1.9rem; z-index: 1; }
+.card-stage > .slot-lever { font-size: 3.2rem; }
+.skin-tile .slot-lever { font-size: 1.8rem; }
+.slot-lever::before {
+  content: ''; position: absolute; inset: 0; transform-origin: 50% 100%;
+  background:
+    radial-gradient(circle at 40% .19em, #fee2e2 0 .045em, #ef4444 .12em, #991b1b .24em, transparent .255em),
+    linear-gradient(90deg, #4b5563, #f9fafb 40%, #9ca3af 70%, #4b5563) 50% .42em / .12em calc(100% - .42em) no-repeat;
+  filter: drop-shadow(0 .05em .05em rgba(0, 0, 0, .35));
+}
+/* Le support vissé sur la machine (ne bouge pas). */
+.slot-lever::after {
+  content: ''; position: absolute; left: -.12em; bottom: -.17em; width: .42em; height: .34em;
+  border-radius: .06em .17em .17em .06em; background: linear-gradient(180deg, #fde68a, #f59e0b 45%, #b45309);
+  box-shadow: 0 0 0 .035em #78350f, inset 0 -.04em .05em rgba(0, 0, 0, .3);
+}
+.num-card.charging + .slot-lever::before, .skin-tile:hover .slot-lever::before { animation: lever-pull 1s cubic-bezier(.45, 0, .3, 1) both; }
+@keyframes lever-pull {
+  0% { transform: scaleY(1); }
+  32% { transform: scaleY(-1); }
+  38% { transform: scaleY(-.9); }
+  44%, 58% { transform: scaleY(-1); }
+  88% { transform: scaleY(1.06); }
+  100% { transform: scaleY(1); }
+}
+.room-stage.many .slot-lever { display: none; }
