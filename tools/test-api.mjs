@@ -377,6 +377,7 @@ await roomPost(dave, 'join', { code: race });
 r = await roomPost(alice, 'start', { code: race });
 assert.deepEqual([r.body.status, r.body.size], ['playing', 2]);
 assert.equal((await roomPost(carol, 'join', { code: race })).status, 422, 'fermée aux nouveaux venus');
+state = r.body;
 while (state.status === 'playing') {
   await later(11000, async () => {
     await roomPost(alice, 'ready', { code: race });
