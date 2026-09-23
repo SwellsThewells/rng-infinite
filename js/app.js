@@ -1833,7 +1833,12 @@
   const ROOM_IDLE_MS = 10 * 60000; // sans aucun changement pendant 10 min, on arrête de sonder (quota de la base)
   const XP_TARGETS = [25000, 50000, 100000, 250000, 1000000];
   const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null, sig: '', changedAt: 0, reactSeen: new Set(), reactBusy: false, achNoted: false };
-  const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
+  // Emotes de duel : la mascotte dé (images dessinées pour le site). Touches 1 à 6.
+  const REACTIONS = ['laugh', 'cry', 'angry', 'cool', 'shock', 'king'];
+  const EMOTE_LABELS = { laugh: 'Laugh', cry: 'Cry', angry: 'Angry', cool: 'Cool', shock: 'Shocked', king: 'King' };
+  const emoteHTML = (id, cls = '') => (EMOTE_LABELS[id]
+    ? `<img class="emote${cls}" src="img/emotes/${id}.png" alt="${EMOTE_LABELS[id]}" draggable="false">`
+    : esc(id)); // ancienne réaction en emoji (salles d'avant les emotes)
   const titleEmoji = id => (id && Ach.byId.get(id) && !Ach.byId.get(id).hidden ? ` ${Ach.byId.get(id).emoji}` : '');
   const goalText = d => (d.mode === 'xp' ? `first to ${compact(d.target)} XP` : `first to ${plural(d.target, 'round win')}`);
 
@@ -2069,6 +2074,7 @@
 
   function renderRoom(code) {
     currentView = 'room';
+    REACTIONS.forEach(id => { new Image().src = `img/emotes/${id}.png`; });
     stopRoom();
     Object.assign(Room, { code: code.toUpperCase(), data: null, shown: 0, rtt: Infinity, view: null, sig: '', changedAt: Date.now(), reactSeen: new Set(), achNoted: false });
     app.innerHTML = `
@@ -2150,7 +2156,7 @@
     const el = document.createElement('span');
     el.className = 'react-bubble';
     el.style.left = `${8 + Math.random() * 84}%`;
-    el.innerHTML = `${r.e}<small>${esc(r.name)}</small>`;
+    el.innerHTML = `${emoteHTML(r.e)}<small>${esc(r.name)}</small>`;
     layer.appendChild(el);
     setTimeout(() => el.remove(), 2800);
   }
@@ -2252,7 +2258,7 @@
           <div class="room-stage${d.players.length > 2 ? ' many' : ''}" id="room-stage"></div>
           <div class="react-layer" id="react-layer" aria-hidden="true"></div>
         </div>
-        ${me ? `<div class="room-reacts" id="room-reacts">${REACTIONS.map((e, i) => `<button class="react-btn" data-react="${e}" title="Press ${i + 1}">${e}</button>`).join('')}</div>` : ''}
+        ${me ? `<div class="room-reacts" id="room-reacts">${REACTIONS.map((e, i) => `<button class="react-btn" data-react="${e}" title="${EMOTE_LABELS[e]} (press ${i + 1})">${emoteHTML(e)}</button>`).join('')}</div>` : ''}
         <div class="room-actions"><div id="room-cta"></div><p class="hint" id="room-hint"></p></div>
         <div class="panel"><div class="panel-head"><h3 class="panel-title">Rounds</h3></div><div id="room-rounds"></div></div>`;
       if (!Room.anim) $('#room-stage').innerHTML = stageHTML(Room.shown ? d.rounds[Room.shown - 1] : null);

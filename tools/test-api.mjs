@@ -304,12 +304,12 @@ assert.equal((await roomPost(dave, 'join', { code })).status, 422, 'partie comme
 assert.equal((await roomPost(dave, 'ready', { code })).status, 422, 'un spectateur ne tire pas');
 
 // Réactions : un emoji de la liste, visible par tous, au plus une toutes les 0,7 s par joueur.
-r = await roomPost(alice, 'react', { code, emoji: '🔥' });
+r = await roomPost(alice, 'react', { code, emoji: 'laugh' });
 assert.equal(r.status, 200, JSON.stringify(r.body));
-assert.deepEqual(r.body.reacts.map(x => [x.name, x.e]), [['Alice', '🔥']]);
-assert.equal((await roomPost(alice, 'react', { code, emoji: '😂' })).status, 429, 'trop vite');
-assert.equal((await roomPost(carol, 'react', { code, emoji: '🍕' })).status, 400, 'emoji hors liste');
-assert.equal((await roomPost(dave, 'react', { code, emoji: '🔥' })).status, 422, 'un spectateur ne réagit pas');
+assert.deepEqual(r.body.reacts.map(x => [x.name, x.e]), [['Alice', 'laugh']]);
+assert.equal((await roomPost(alice, 'react', { code, emoji: 'cry' })).status, 429, 'trop vite');
+assert.equal((await roomPost(carol, 'react', { code, emoji: '🍕' })).status, 400, 'emote hors liste');
+assert.equal((await roomPost(dave, 'react', { code, emoji: 'laugh' })).status, 422, 'un spectateur ne réagit pas');
 r = await roomGet(code, carol);
 assert.deepEqual(r.body.reacts.map(x => x.name), ['Alice'], 'les autres voient la réaction');
 assert.ok(r.body.players.every(p => 'title' in p));

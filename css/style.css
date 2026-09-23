@@ -912,16 +912,19 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 /* réactions en duel */
 .room-arena { position: relative; }
 .react-layer { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
-.react-bubble { position: absolute; bottom: 10%; display: flex; flex-direction: column; align-items: center; font-size: 2rem; line-height: 1; animation: react-float 2.6s ease-out forwards; }
+.react-bubble { position: absolute; bottom: 8%; display: flex; flex-direction: column; align-items: center; font-size: 2rem; line-height: 1; transform-origin: 50% 100%; animation: react-float 2.8s ease-out forwards; }
+.react-bubble .emote { width: 76px; height: 76px; filter: drop-shadow(0 4px 6px rgba(0, 0, 0, .35)); }
 .react-bubble small { margin-top: .2rem; padding: .05rem .35rem; border-radius: 999px; background: var(--surface); border: 1px solid var(--outline); font-size: .58rem; font-weight: 700; color: var(--prose-2); }
-@keyframes react-float { 0% { transform: translateY(0) scale(.6); opacity: 0; } 12% { transform: translateY(-12px) scale(1.15); opacity: 1; } 100% { transform: translateY(-190px) scale(1); opacity: 0; } }
+@keyframes react-float { 0% { transform: translateY(0) scale(.2); opacity: 0; } 10% { transform: translateY(-14px) scale(1.18); opacity: 1; } 18% { transform: translateY(-8px) scale(.94); } 26% { transform: translateY(-10px) scale(1.04); } 34% { transform: translateY(-10px) scale(1); } 70% { transform: translateY(-40px) scale(1); opacity: 1; } 100% { transform: translateY(-150px) scale(.9); opacity: 0; } }
 .room-reacts { display: flex; justify-content: center; gap: .35rem; margin-top: .8rem; }
-.react-btn { border: 1px solid var(--outline); background: var(--surface); border-radius: 999px; font-size: 1.25rem; line-height: 1; padding: .35rem .55rem; cursor: pointer; transition: transform .12s ease; }
+.react-btn { border: 1px solid var(--outline); background: var(--surface); border-radius: .8rem; font-size: 1.25rem; line-height: 1; padding: .2rem; cursor: pointer; transition: transform .12s ease; }
+.react-btn .emote { display: block; width: 46px; height: 46px; }
 .react-btn:hover { transform: scale(1.15); }
 .react-btn:active { transform: scale(.92); }
 @media (max-width: 560px) {
   .lb-who .title-pill .t { display: none; }
-  .react-btn { font-size: 1.1rem; padding: .3rem .45rem; }
+  .react-btn .emote { width: 38px; height: 38px; }
+  .react-bubble .emote { width: 60px; height: 60px; }
 }
 @media (prefers-reduced-motion: reduce) { .react-bubble { animation-duration: 1.2s; } }
 

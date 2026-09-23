@@ -25,7 +25,8 @@ const GAP_MS = 8000; // écart minimal entre deux manches, comme le délai entre
 const AUTO_MS = 15000; // la manche part toute seule 15 s après le premier joueur prêt
 const ABANDON_MS = 30000; // plus aucun joueur sur la page depuis 30 s : la partie s'arrête (sans gagnant ni stats)
 const TTL = 86400; // une salle est gardée un jour après sa dernière action
-const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
+// Emotes (images img/emotes/<id>.png : la mascotte dé qui rit, pleure, s'énerve, fait le cool, est choquée, joue au roi).
+const REACTIONS = ['laugh', 'cry', 'angry', 'cool', 'shock', 'king'];
 const REACT_SHOWN_MS = 15000; // réactions renvoyées aux sondages pendant 15 s
 const REACT_EVERY_MS = 700; // au plus une réaction toutes les 0,7 s par joueur
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O ni 1/I, 32 signes
@@ -178,7 +179,7 @@ function botReactions(room, round) {
   const out = [];
   room.players.forEach((p, i) => {
     if (!p.bot || crypto.randomInt(0, 100) >= 55) return;
-    const e = s[i] === best ? pick(['🔥', '🎉']) : pick(['😭', '💀', '😱']);
+    const e = s[i] === best ? pick(['laugh', 'cool', 'king']) : pick(['cry', 'angry', 'shock']);
     out.push(['RPUSH', reactsKey(room.code), JSON.stringify({ t: round.revealAt + 10500 + crypto.randomInt(0, 1500), i, e })]);
   });
   if (out.length) out.push(['LTRIM', reactsKey(room.code), -30, -1], ['EXPIRE', reactsKey(room.code), TTL]);
