@@ -1355,3 +1355,59 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
   100% { transform: scaleY(1); }
 }
 .room-stage.many .slot-lever { display: none; }
+
+/* ================================================================== Fire : fond de carte en vrai brasier (2026-09-23)
+   ::after = langues de feu floues qui montent et vacillent depuis le bas ; ::before = braises qui s'envolent en boucle.
+   Les chiffres passent au-dessus (z-index). */
+.num-card.skin-fire {
+  background: linear-gradient(0deg, #9a3412 0%, #431407 30%, #1c0a05 62%, #0a0302 100%);
+  border-color: #fb923c;
+  box-shadow: 0 0 18px rgba(249, 115, 22, .55), 0 0 42px rgba(220, 38, 38, .25), inset 0 -10px 18px rgba(251, 146, 60, .35);
+}
+.skin-fire .slot { position: relative; z-index: 2; filter: drop-shadow(0 0 6px rgba(251, 146, 60, .55)); }
+.num-card.skin-fire::after {
+  inset: auto 0 0 0; height: 120%; z-index: 1; opacity: 1; mix-blend-mode: screen; filter: blur(2.5px) saturate(1.2);
+  background:
+    radial-gradient(9% 60% at 6% 100%, #fff7ed 0, #fdba74 22%, #f97316 45%, rgba(220, 38, 38, .6) 65%, transparent 80%),
+    radial-gradient(8% 80% at 19% 100%, #fef9c3 0, #fde047 18%, #fb923c 42%, rgba(220, 38, 38, .55) 66%, transparent 82%),
+    radial-gradient(10% 55% at 33% 100%, #fff7ed 0, #fdba74 22%, #f97316 45%, rgba(220, 38, 38, .6) 65%, transparent 80%),
+    radial-gradient(8% 88% at 47% 100%, #fef9c3 0, #fde047 18%, #fb923c 42%, rgba(220, 38, 38, .55) 66%, transparent 82%),
+    radial-gradient(10% 62% at 61% 100%, #fff7ed 0, #fdba74 22%, #f97316 45%, rgba(220, 38, 38, .6) 65%, transparent 80%),
+    radial-gradient(8% 78% at 76% 100%, #fef9c3 0, #fde047 18%, #fb923c 42%, rgba(220, 38, 38, .55) 66%, transparent 82%),
+    radial-gradient(9% 58% at 92% 100%, #fff7ed 0, #fdba74 22%, #f97316 45%, rgba(220, 38, 38, .6) 65%, transparent 80%),
+    radial-gradient(60% 30% at 50% 100%, rgba(254, 215, 170, .7), rgba(234, 88, 12, .4) 50%, transparent 80%);
+  background-size: 100% 100%; background-repeat: no-repeat; background-position: 0 100%;
+  transform-origin: 50% 100%;
+  animation: fire-tongues 1.1s ease-in-out infinite alternate, fire-sway .8s ease-in-out infinite alternate;
+}
+@keyframes fire-tongues {
+  0% { background-size: 100% 60%, 100% 95%, 100% 75%, 100% 100%, 100% 70%, 100% 90%, 100% 65%, 100% 100%; background-position: 0 100%; }
+  33% { background-size: 100% 90%, 100% 70%, 100% 100%, 100% 72%, 100% 95%, 100% 68%, 100% 92%, 100% 100%; }
+  66% { background-size: 100% 72%, 100% 100%, 100% 66%, 100% 94%, 100% 70%, 100% 100%, 100% 74%, 100% 100%; }
+  100% { background-size: 100% 100%, 100% 78%, 100% 88%, 100% 68%, 100% 100%, 100% 76%, 100% 98%, 100% 100%; background-position: 0 100%; }
+}
+@keyframes fire-sway { from { transform: skewX(-4deg) scaleY(.96); opacity: .85; } to { transform: skewX(4deg) scaleY(1.04); opacity: 1; } }
+.num-card.skin-fire::before {
+  content: ''; position: absolute; left: 0; right: 0; top: 0; height: 200%; z-index: 1; pointer-events: none;
+  background:
+    radial-gradient(circle at 12% 20%, #fde68a 0 1.2px, transparent 2px),
+    radial-gradient(circle at 33% 72%, #fdba74 0 1px, transparent 1.8px),
+    radial-gradient(circle at 51% 38%, #fef3c7 0 1.4px, transparent 2.2px),
+    radial-gradient(circle at 68% 86%, #fb923c 0 1px, transparent 1.8px),
+    radial-gradient(circle at 84% 12%, #fde68a 0 1.2px, transparent 2px),
+    radial-gradient(circle at 93% 57%, #fdba74 0 1px, transparent 1.8px),
+    radial-gradient(circle at 24% 94%, #fef3c7 0 1.1px, transparent 1.9px);
+  background-size: 100% 50%;
+  filter: drop-shadow(0 0 2px #f97316);
+  animation: embers-rise 2.6s linear infinite;
+}
+@keyframes embers-rise { from { transform: translateY(0); } to { transform: translateY(-50%); } }
+
+/* Cadre de duel Fire : un vrai lit de flammes au pied du cadre. */
+.side-fire { --side-bg:
+    radial-gradient(14% 38% at 10% 100%, rgba(251, 146, 60, .45), transparent 70%),
+    radial-gradient(12% 46% at 30% 100%, rgba(249, 115, 22, .4), transparent 72%),
+    radial-gradient(16% 34% at 52% 100%, rgba(251, 146, 60, .45), transparent 70%),
+    radial-gradient(12% 44% at 73% 100%, rgba(249, 115, 22, .4), transparent 72%),
+    radial-gradient(14% 38% at 92% 100%, rgba(251, 146, 60, .45), transparent 70%),
+    radial-gradient(90% 55% at 50% 110%, rgba(239, 68, 68, .25), transparent 70%); }
