@@ -266,6 +266,7 @@ const roomApi = require(path.join(ROOT, 'api/room.js'));
 const roomPost = (who, action, extra = {}) => call(roomApi, { method: 'POST', body: { ...who, action, ...extra } });
 const roomGet = (code, who) => call(roomApi, { url: `/api/room?code=${code}${who ? `&me=${who.playerId}` : ''}` });
 const bobNow = { ...bob, name: 'Sacha' };
+const BOT_NAME_RE = /^(Robo|DiceBot|Lucky 9000|Glitch|Byte|Clanky|Sparky|Nano|Beep Boop|Tux|Bot \d+)$/;
 const carol = { playerId: 'd'.repeat(16), secret: '4'.repeat(32), name: 'Carol' };
 const dave = { playerId: 'e'.repeat(16), secret: '5'.repeat(32), name: 'Dave' };
 let clock = 0;
@@ -376,7 +377,6 @@ await roomPost(dave, 'join', { code: race });
 r = await roomPost(alice, 'start', { code: race });
 assert.deepEqual([r.body.status, r.body.size], ['playing', 2]);
 assert.equal((await roomPost(carol, 'join', { code: race })).status, 422, 'fermée aux nouveaux venus');
-state = r.body;
 while (state.status === 'playing') {
   await later(11000, async () => {
     await roomPost(alice, 'ready', { code: race });
@@ -500,5 +500,45 @@ if (state.winner !== null) {
   assert.ok(r.body.duels.rivals.some(x => x.name === winnerName && x.l >= 1), 'le perdant a le gagnant dans ses rivaux');
   assert.equal(r.body.duels.vsMe, null, 'sans me, pas de face-à-face');
 }
+
+// 18. Bots : toujours prêts, ils tirent comme tout le monde, mais une partie avec des bots ne compte pas en duel.
+const gina = { playerId: '8'.repeat(16), secret: 'a'.repeat(32), name: 'Gina' };
+r = await roomPost(gina, 'create', { size: 5, mode: 'rounds', target: 2, bots: 2, public: true });
+assert.equal(r.status, 200, JSON.stringify(r.body));
+const botRoom = r.body.code;
+assert.deepEqual([r.body.status, r.body.public, r.body.bots, r.body.players.length], ['playing', false, true, 3], 'privée, démarrée, moi + 2 bots');
+assert.deepEqual(r.body.players.map(p => p.bot), [false, true, true]);
+assert.equal(new Set(r.body.players.map(p => p.name)).size, 3, 'noms distincts');
+assert.ok(r.body.players.every(p => !p.ready), 'les bots ne sont pas affichés « ready »');
+assert.ok(!(await call(roomApi, { url: '/api/room?live=1' })).body.rooms.some(x => x.code === botRoom), 'pas dans Live now');
+const ginaStatsBefore = run([['HMGET', `stats:${gina.playerId}`, 'duels', 'duelWins']])[0].result;
+r = await later(0, () => roomPost(gina, 'ready', { code: botRoom }));
+assert.equal(r.body.rounds.length, 1, 'je suis prêt, les bots aussi : la manche part');
+assert.equal(r.body.rounds[0].n.length, 3);
+for (const x of r.body.reacts) assert.ok(x.t > r.body.rounds[0].revealAt, 'réactions des bots après la révélation');
+r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
+assert.ok(r.body.entries.some(e => e.name === 'Gina'), 'mon tirage compte au classement');
+assert.ok(!r.body.entries.some(e => BOT_NAME_RE.test(e.name)), 'les bots n\'y sont pas');
+let botState = (await roomGet(botRoom, gina)).body;
+while (botState.status === 'playing') {
+  botState = await later(11000, async () => (await roomPost(gina, 'ready', { code: botRoom })).body);
+}
+assert.deepEqual(run([['HMGET', `stats:${gina.playerId}`, 'duels', 'duelWins']])[0].result, ginaStatsBefore, 'partie avec bots : pas de victoire de duel');
+assert.equal(run([['EXISTS', `h2h:${gina.playerId}`]])[0].result, 0, 'ni de face-à-face');
+r = await roomPost(gina, 'rematch', { code: botRoom });
+assert.deepEqual([r.body.status, r.body.players.filter(p => p.bot).length], ['playing', 2], 'revanche avec les mêmes bots');
+
+// L'hôte complète son salon avec des bots ; salle pleine : la partie commence. Deux humains : un bot seul ne lance rien.
+r = await roomPost(gina, 'create', { size: 3 });
+const mixed = r.body.code;
+assert.equal((await roomPost(dave, 'addBot', { code: mixed })).status, 422, 'seul l\'hôte ajoute des bots');
+await roomPost(dave, 'join', { code: mixed });
+r = await roomPost(gina, 'addBot', { code: mixed });
+assert.deepEqual([r.body.status, r.body.players.map(p => p.bot)], ['playing', [false, false, true]]);
+assert.equal((await roomPost(gina, 'addBot', { code: mixed })).status, 422, 'partie commencée');
+r = await later(11000, () => roomPost(gina, 'ready', { code: mixed }));
+assert.equal(r.body.rounds.length, 0, 'Dave n\'est pas prêt : on l\'attend (le bot ne compte pas)');
+r = await later(0, () => roomPost(dave, 'ready', { code: mixed }));
+assert.equal(r.body.rounds.length, 1);
 
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

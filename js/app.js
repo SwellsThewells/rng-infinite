@@ -1749,7 +1749,11 @@
           <div class="panel">
             <div class="panel-head"><h3 class="panel-title">Create a game</h3></div>
             <div id="d-setup"></div>
-            <button class="btn-roll small" id="d-create">⚔️ Create the game</button>
+            <div class="room-buttons" style="justify-content:flex-start">
+              <button class="btn-roll small" id="d-create">⚔️ Create the game</button>
+              <button class="btn" id="d-bots"></button>
+            </div>
+            <p class="panel-note" style="margin:.6rem 0 0">Against bots the game starts at once and your rolls count as usual, but not duel wins, rivalries or duel achievements.</p>
           </div>
           <div class="panel">
             <div class="panel-head"><h3 class="panel-title">Join with a code</h3></div>
@@ -1777,6 +1781,7 @@
           : `<div class="field"><label>Round wins needed</label>${seg('wins', [1, 2, 3, 4, 5, 6, 7, 8, 9, 10], p.wins)}</div>`}
         <div class="field"><label>Visibility</label>${seg('isPublic', ['true', 'false'], String(p.isPublic), v => (v === 'true' ? 'Public' : 'Private'))}</div>
         <p class="panel-note">${p.size} players · ${goalText({ mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins })} · ${p.isPublic ? 'listed in Live now' : 'code only'}</p>`;
+      $('#d-bots').textContent = `🤖 Play vs ${plural(p.size - 1, 'bot')}`;
     };
     drawSetup();
     $('#d-setup').addEventListener('click', e => {
@@ -1787,7 +1792,8 @@
       Store.setSetting('duel', { ...duelPrefs(), [key]: value });
       drawSetup();
     });
-    $('#d-create').addEventListener('click', createRoom);
+    $('#d-create').addEventListener('click', () => createRoom());
+    $('#d-bots').addEventListener('click', () => createRoom(duelPrefs().size - 1));
     $('#d-join').addEventListener('submit', e => { e.preventDefault(); joinRoom($('#d-code').value); });
     drawLive();
     drawShop();
@@ -1878,14 +1884,15 @@
     toast(err.status === 404 ? 'No duel with this code' : err.status === 422 ? err.message : 'Duel unavailable right now, try again');
   }
 
-  async function createRoom() {
-    if (!Store.player.name) { askName(createRoom); return; }
+  // bots : nombre de bots pour une partie immédiate contre eux (0 = partie normale, on attend les joueurs).
+  async function createRoom(bots = 0) {
+    if (!Store.player.name) { askName(() => createRoom(bots)); return; }
     const p = duelPrefs();
     try {
-      const d = await Online.roomAction('create', null, { size: p.size, mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins, public: p.isPublic });
+      const d = await Online.roomAction('create', null, { size: p.size, mode: p.mode, target: p.mode === 'xp' ? p.xp : p.wins, public: p.isPublic, bots });
       location.hash = roomHref(d.code);
     } catch (err) {
-      roomError(err, createRoom);
+      roomError(err, () => createRoom(bots));
     }
   }
 
@@ -1999,7 +2006,9 @@
       const key = `${r.t}:${r.name}:${r.e}`;
       if (Room.reactSeen.has(key)) continue;
       Room.reactSeen.add(key);
-      if (serverNow() - r.t < 6000) reactBubble(r);
+      const wait = r.t - serverNow();
+      if (wait > 0) setTimeout(() => { if (currentView === 'room') reactBubble(r); }, wait);
+      else if (wait > -6000) reactBubble(r);
     }
     if (!Room.anim && Room.shown < d.rounds.length) playRound(Room.shown);
   }
@@ -2062,7 +2071,7 @@
         body.innerHTML = '<div class="room-code-box" id="room-lobby"></div>';
       }
       const host = d.players.find(p => p.host);
-      const seats = d.players.map(p => `<span class="badge-pill">${p.host ? '👑 ' : ''}${esc(p.name)}${titleEmoji(p.title)}${p.me ? ' (you)' : ''}</span>`).join('')
+      const seats = d.players.map(p => `<span class="badge-pill">${p.host ? '👑 ' : ''}${p.bot ? '🤖 ' : ''}${esc(p.name)}${titleEmoji(p.title)}${p.me ? ' (you)' : ''}</span>`).join('')
         + '<span class="badge-pill empty-seat">…</span>'.repeat(Math.max(0, d.size - d.players.length));
       const wait = !me ? '' : me.host
         ? (d.players.length > 1 ? 'Start now, or wait: the game starts by itself when it is full' : 'Waiting for players…')
@@ -2075,6 +2084,7 @@
         <p class="panel-note">${d.players.length} / ${d.size} players</p>
         <div class="room-buttons">
           ${me ? '<button class="btn" id="room-share">Share invite</button>' : '<button class="btn-roll small" id="room-join">⚔️ Join</button>'}
+          ${me && me.host && d.players.length < d.size ? '<button class="btn" id="room-bot">🤖 Add a bot</button>' : ''}
           ${me && me.host && d.players.length > 1 ? `<button class="btn-roll small" id="room-start">Start now with ${d.players.length}</button>` : ''}
         </div>
         ${wait ? `<p class="room-wait">${wait}</p>` : ''}`;
@@ -2085,6 +2095,8 @@
         if (join) join.addEventListener('click', () => joinRoom(d.code));
         const start = $('#room-start');
         if (start) start.addEventListener('click', () => roomSend('start', start));
+        const addBot = $('#room-bot');
+        if (addBot) addBot.addEventListener('click', () => roomSend('addBot', addBot));
       }
       return;
     }
@@ -2092,7 +2104,7 @@
     if (Room.view !== 'playing') {
       Room.view = 'playing';
       body.innerHTML = `
-        <p class="panel-note profile-sub">${d.players.length} players · ${goalText(d)} · each round goes to the highest roll · duel rolls count on the leaderboard</p>
+        <p class="panel-note profile-sub">${d.players.length} players · ${goalText(d)} · each round goes to the highest roll · ${d.bots ? 'with bots: your rolls count, but not duel wins or rivalries' : 'duel rolls count on the leaderboard'}</p>
         <div class="room-board" id="room-board"></div>
         <div class="room-arena">
           <div class="room-stage${d.players.length > 2 ? ' many' : ''}" id="room-stage"></div>
@@ -2115,11 +2127,13 @@
         ? `<span class="xp-bar"><span style="width:${Math.min(100, (totals[i] / d.target) * 100)}%"></span></span><span class="mono">${compact(totals[i])} / ${compact(d.target)}</span>`
         : `<span class="mono board-wins">${wins[i]} / ${d.target}</span><span class="panel-note">${compact(totals[i])} XP</span>`;
       const ready = d.status === 'playing' && p.ready && !Room.anim ? '<span class="ready-chip">ready</span>' : '';
-      return `<div class="board-row${p.me ? ' me' : ''}"><span class="rank">${k + 1}</span><a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>${titleHTML(p.title)}${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
+      const who = p.bot ? `<span class="bot-name">🤖 ${esc(p.name)}</span>` : `<a class="player-link" href="${profileHref(p.name)}">${esc(p.name)}</a>`;
+      return `<div class="board-row${p.me ? ' me' : ''}"><span class="rank">${k + 1}</span>${who}${titleHTML(p.title)}${p.me ? '<span class="muted">(you)</span>' : ''}${ready}<span class="board-metric">${metric}</span></div>`;
     }).join(''));
 
     const finished = d.status === 'done' && Room.shown === d.rounds.length && !Room.anim;
-    const readyCount = d.players.filter(p => p.ready).length;
+    const people = d.players.filter(p => !p.bot); // les bots sont toujours prêts : on ne compte que les humains
+    const readyCount = people.filter(p => p.ready).length;
     const countdown = d.autoAt ? ` · starts by itself in ${Math.max(0, Math.ceil((d.autoAt - serverNow()) / 1000))} s` : '';
     let cta, hint = '';
     if (finished && !Room.achNoted && d.achievements) {
@@ -2138,14 +2152,14 @@
       cta = `<p class="room-wait">Round ${Room.shown + 1}…</p>`;
     } else if (!me) {
       cta = '<p class="room-wait">Watching live</p>';
-      hint = `${readyCount} / ${d.players.length} ready${countdown}`;
+      hint = `${readyCount} / ${people.length} ready${countdown}`;
     } else if (me.ready) {
-      const missing = d.players.filter(p => !p.ready).map(p => p.name);
+      const missing = people.filter(p => !p.ready).map(p => p.name);
       cta = `<p class="room-wait">Waiting for ${missing.length <= 3 ? esc(missing.join(', ')) : `${missing.length} players`}…</p>`;
-      hint = `${readyCount} / ${d.players.length} ready${countdown}`;
+      hint = `${readyCount} / ${people.length} ready${countdown}`;
     } else {
       cta = `<button class="btn-roll" id="room-roll">🎲 Roll round ${d.rounds.length + 1}</button>`;
-      hint = `${readyCount ? `${readyCount} / ${d.players.length} ready${countdown} · ` : ''}press <kbd>Space</kbd>`;
+      hint = `${readyCount && people.length > 1 ? `${readyCount} / ${people.length} ready${countdown} · ` : ''}press <kbd>Space</kbd>`;
     }
     if (setHTML($('#room-cta'), cta)) {
       const roll = $('#room-roll');
@@ -2180,7 +2194,7 @@
         : `<div class="num-card md neutral${spinning ? ' charging' : ''}${skinClass(p.skin)}" id="rc-${j}">${'??????'.split('').map(c => `<span class="slot${spinning ? ' spinning' : ''}">${spinning ? '0' : c}</span>`).join('')}</div>`;
       return `
         <div class="room-side${won ? ' won' : ''}${p.me ? ' me' : ''}" id="rs-${j}">
-          <div class="room-name">${won ? '🏆 ' : ''}${esc(p.name)}${titleEmoji(p.title)}</div>
+          <div class="room-name">${won ? '🏆 ' : ''}${p.bot ? '🤖 ' : ''}${esc(p.name)}${titleEmoji(p.title)}</div>
           ${card}
           <div class="room-meta" id="rm-${j}">${a ? `${tierPill(a.tier)}<span class="ep-pill">${fmt(a.total)} XP</span>` : ''}</div>
           <div class="pill-row" id="rb-${j}">${a ? a.groups.slice(0, 2).map(g => `<span class="badge-pill" data-tier="${g.badge.tier}">${g.badge.emoji} ${esc(g.badge.label)}</span>`).join('') : ''}</div>
@@ -2345,6 +2359,7 @@
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
         <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
+        <p>No one around? Play a duel against bots from the Duel tab: your rolls count as usual, but not duel wins, rivalries or duel achievements.</p>
         <p>Coins and skins: every roll earns coins (more for rarer rolls) and so does every duel you win. Spend them in the Duel tab on skins that change how your number looks. In-game coins only.</p>
         <p>Achievements unlock titles: equip one from your profile and it shows next to your name on the leaderboard and in duels. They are checked by the server, so nobody can wear a title they did not earn.</p>
         <p>Duel (top menu): create a game for 2 to 10 players and send the code. Everyone rolls at the same time and all numbers are revealed together; each round goes to the highest roll. Win by being first to 1–10 round wins, or first to an XP total. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>

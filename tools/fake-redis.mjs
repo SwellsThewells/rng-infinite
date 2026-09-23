@@ -29,6 +29,7 @@ export function fakeRedis() {
       return 'OK';
     },
     GET: k => (alive(k) ? db.get(k) : null),
+    EXISTS: (...keys) => keys.filter(k => db.has(k)).length,
     DEL: (...keys) => keys.filter(k => db.delete(k)).length,
     INCR(k) { const v = Number(db.get(k) || 0) + 1; db.set(k, String(v)); return v; },
     EXPIRE: () => 1,

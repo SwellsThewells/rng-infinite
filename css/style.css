@@ -972,3 +972,4 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 .skin-donut .slot.collapsed, .skin-dice .slot.collapsed, .skin-pixel .slot.collapsed { width: 0; height: 0; margin: 0; box-shadow: none; background: none; }
 @media (prefers-reduced-motion: reduce) { .skin-fire .slot, .skin-rainbow .slot { animation: none; } }
 @media (max-width: 560px) { .live-row { flex-wrap: wrap; } .skin-grid { grid-template-columns: 1fr 1fr; } .skin-tile .num-card.md { font-size: 1.15rem; } }
+.bot-name { font-weight: 700; color: var(--prose-2); }

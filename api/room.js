@@ -9,8 +9,12 @@
 //   POST /api/room { action: 'create' | 'join' | 'start' | 'ready' | 'react' | 'rematch', code?, size?, mode?, target?, emoji?, playerId, secret, name }
 //   GET  /api/room?code=<code>&me=<playerId>   (sondé toutes les ~1,5 s par les joueurs et les spectateurs)
 //   GET  /api/room?live=1                      → parties publiques en cours ("Live now"), à regarder ou rejoindre
+// Bots : "create" avec bots: k (partie privée qui démarre aussitôt) ou "addBot" par l'hôte dans le salon. Toujours prêts,
+// ils tirent comme tout le monde et réagissent après chaque manche. Une partie avec des bots ne compte ni en victoires
+// de duel ni en face-à-face (sinon on farmerait) ; les tirages des humains, eux, comptent comme des tirages normaux.
 const crypto = require('node:crypto');
 const { engine, redis, cleanName, claimPlayer, claimName, recordRoll, readStats, statsKey, Achievements, cors, send } = require('./_lib');
+const Shop = require('../js/shop.js');
 
 const MIN_PLAYERS = 2, MAX_PLAYERS = 10;
 const MAX_WINS = 10;
@@ -24,6 +28,14 @@ const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
 const REACT_SHOWN_MS = 15000; // réactions renvoyées aux sondages pendant 15 s
 const REACT_EVERY_MS = 700; // au plus une réaction toutes les 0,7 s par joueur
 const ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // sans 0/O ni 1/I, 32 signes
+const BOT_NAMES = ['Robo', 'DiceBot', 'Lucky 9000', 'Glitch', 'Byte', 'Clanky', 'Sparky', 'Nano', 'Beep Boop', 'Tux'];
+const pick = list => list[crypto.randomInt(0, list.length)];
+
+// Un bot : identifiant qui ne peut pas être celui d'un vrai joueur, nom libre dans la salle, skin au hasard.
+function makeBot(taken) {
+  const free = BOT_NAMES.filter(n => !taken.includes(n));
+  return { id: `bot-${crypto.randomBytes(4).toString('hex')}`, name: free.length ? pick(free) : `Bot ${taken.length + 1}`, bot: true, title: null, skin: pick(Shop.SKINS).id };
+}
 const roomKey = code => `room:${code}`;
 const playersKey = code => `room:${code}:players`;
 const roundsKey = code => `room:${code}:rounds`;
@@ -96,17 +108,21 @@ function score(room) {
   return { list, wins, totals, done, winner };
 }
 
-const readyFor = (room, id) => (room.h[`ready:${id}`] == null ? -1 : Number(room.h[`ready:${id}`]));
+// Manche pour laquelle un joueur est prêt ; un bot l'est toujours.
+const readyFor = (room, p) => (p.bot ? room.rounds.length : room.h[`ready:${p.id}`] == null ? -1 : Number(room.h[`ready:${p.id}`]));
+const humans = room => room.players.filter(p => !p.bot);
+const hasBots = room => room.players.some(p => p.bot);
 
 // Lance la manche suivante si tout le monde est prêt (ou 15 s après le premier prêt). Un seul appel (verrou par
 // manche) tire les nombres de tous les joueurs au même instant.
 async function advance(room, now = Date.now()) {
   if (!room.started || score(room).done) return room;
   const k = room.rounds.length;
-  const ready = room.players.filter(p => readyFor(room, p.id) === k).length;
+  // Les bots ne lancent jamais une manche : il faut au moins un humain prêt.
+  const ready = humans(room).filter(p => readyFor(room, p) === k).length;
   if (!ready) return room;
   const first = Number(room.h[`first:${k}`] || now);
-  if (ready < room.players.length && now < first + AUTO_MS) return room;
+  if (ready < humans(room).length && now < first + AUTO_MS) return room;
   const last = room.rounds[k - 1];
   if (last && now < last.revealAt + GAP_MS) return room;
   const [lock] = await redis([['SET', `${roomKey(room.code)}:draw:${k}`, '1', 'NX', 'EX', TTL]]);
@@ -116,19 +132,40 @@ async function advance(room, now = Date.now()) {
     ['RPUSH', roundsKey(room.code), JSON.stringify(round)],
     ...[roomKey(room.code), playersKey(room.code), roundsKey(room.code)].map(key => ['EXPIRE', key, TTL]),
     // Pas de tirage normal en parallèle pendant la manche.
-    ...room.players.map(p => ['SET', `cooldown:${p.id}`, '1', 'PX', GAP_MS]),
+    ...humans(room).map(p => ['SET', `cooldown:${p.id}`, '1', 'PX', GAP_MS]),
     ...touchLive(room, now),
+    ...botReactions(room, round),
   ]);
-  await Promise.all(room.players.map((p, i) => recordRoll(p.id, round.n[i], round.t)));
+  await Promise.all(room.players.map((p, i) => (p.bot ? null : recordRoll(p.id, round.n[i], round.t))));
   room.rounds.push(round);
   await recordDuel(room);
   return room;
 }
 
+// Réactions des bots, datées juste après la révélation (le site ne les montre qu'à cette heure-là) :
+// 🔥 ou 🎉 pour le gagnant de la manche, 😭 💀 ou 😱 sinon, pas à chaque fois.
+function botReactions(room, round) {
+  const s = round.n.map(n => engine.scoreOf(n));
+  const best = Math.max(...s);
+  const out = [];
+  room.players.forEach((p, i) => {
+    if (!p.bot || crypto.randomInt(0, 100) >= 55) return;
+    const e = s[i] === best ? pick(['🔥', '🎉']) : pick(['😭', '💀', '😱']);
+    out.push(['RPUSH', reactsKey(room.code), JSON.stringify({ t: round.revealAt + 10500 + crypto.randomInt(0, 1500), i, e })]);
+  });
+  if (out.length) out.push(['LTRIM', reactsKey(room.code), -30, -1], ['EXPIRE', reactsKey(room.code), TTL]);
+  return out;
+}
+
 // Dernière manche tirée (une seule fois, sous le verrou) : résultat de la partie dans les stats des succès.
+// Partie avec des bots : rien (pas de victoire, de face-à-face ni de pièces de victoire à farmer).
 async function recordDuel(room) {
   const sc = score(room);
   if (!sc.done) return;
+  if (hasBots(room)) {
+    await redis([['ZREM', LIVE_KEY, room.code]]);
+    return;
+  }
   const writes = room.players.map(p => ['HINCRBY', statsKey(p.id), 'duels', 1]);
   writes.push(['ZREM', LIVE_KEY, room.code]);
   if (sc.winner !== null) {
@@ -153,19 +190,19 @@ async function view(room, me) {
   const sc = score(room);
   const k = room.rounds.length;
   const status = !room.started ? 'lobby' : sc.done ? 'done' : 'playing';
-  const readyCount = room.players.filter(p => readyFor(room, p.id) === k).length;
+  const readyCount = humans(room).filter(p => readyFor(room, p) === k).length;
   const first = room.h[`first:${k}`];
   const last = room.rounds[k - 1];
   return {
-    code: room.code, status, size: room.size, mode: room.mode, target: room.target, public: room.h.public === '1',
+    code: room.code, status, size: room.size, mode: room.mode, target: room.target, public: room.h.public === '1', bots: hasBots(room),
     players: room.players.map((p, i) => ({
-      name: p.name, title: p.title || null, skin: p.skin || null, me: p.id === me, host: p.id === room.host,
-      ready: status === 'playing' && readyFor(room, p.id) === k, wins: sc.wins[i], total: sc.totals[i],
+      name: p.name, title: p.title || null, skin: p.skin || null, bot: !!p.bot, me: p.id === me, host: p.id === room.host,
+      ready: status === 'playing' && !p.bot && readyFor(room, p) === k, wins: sc.wins[i], total: sc.totals[i],
     })),
     rounds: sc.list,
     winner: sc.winner,
     // La manche part d'elle-même à autoAt (si quelqu'un est prêt), jamais avant nextAt (8 s après la précédente).
-    autoAt: status === 'playing' && readyCount && readyCount < room.players.length && first ? Number(first) + AUTO_MS : null,
+    autoAt: status === 'playing' && readyCount && readyCount < humans(room).length && first ? Number(first) + AUTO_MS : null,
     nextAt: last ? last.revealAt + GAP_MS : 0,
     next: room.h.next || null, // code de la revanche, une fois lancée
     nextBy: room.h.nextBy || null, // nom de celui qui l'a lancée
@@ -245,7 +282,13 @@ module.exports = async (req, res) => {
     }
 
     if (body.action === 'create') {
-      const code = await createRoom(rules(body), null);
+      const bots = Math.min(MAX_PLAYERS - 1, Math.max(0, Math.round(Number(body.bots) || 0)));
+      let players = null;
+      if (bots) {
+        players = [await seat(playerId, name)];
+        for (let i = 0; i < bots; i++) players.push(makeBot(players.map(p => p.name)));
+      }
+      const code = await createRoom(bots ? { ...rules(body), isPublic: false } : rules(body), players);
       if (!code) return send(res, 503, { error: 'Could not create a duel, try again' });
       return send(res, 200, await view(await load(code), playerId));
     }
@@ -268,6 +311,22 @@ module.exports = async (req, res) => {
       }
       const writes = [['RPUSH', playersKey(code), JSON.stringify(await seat(playerId, name))], ...touchLive(room)];
       if (Number(count) === room.size) writes.push(['HSET', roomKey(code), 'started', 1]); // complet : la partie commence
+      await redis(writes);
+      return send(res, 200, await view(await load(code), playerId));
+    }
+
+    // L'hôte complète une place du salon avec un bot ; salle pleine : la partie commence.
+    if (body.action === 'addBot') {
+      if (room.host !== playerId) return send(res, 422, { error: 'Only the host can add bots' });
+      if (room.started) return send(res, 422, { error: 'This duel has already started' });
+      const [count] = await redis([['HINCRBY', roomKey(code), 'count', 1]]);
+      if (Number(count) > room.size) {
+        await redis([['HINCRBY', roomKey(code), 'count', -1]]);
+        return send(res, 422, { error: 'This duel is full' });
+      }
+      const bot = makeBot(room.players.map(p => p.name));
+      const writes = [['RPUSH', playersKey(code), JSON.stringify(bot)], ['HSET', roomKey(code), `m:${bot.id}`, 1], ...touchLive(room)];
+      if (Number(count) === room.size) writes.push(['HSET', roomKey(code), 'started', 1]);
       await redis(writes);
       return send(res, 200, await view(await load(code), playerId));
     }
