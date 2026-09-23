@@ -1175,6 +1175,30 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 /* Rainbow : chaque chiffre surgit en tournoyant, puis les couleurs défilent. */
 .skin-rainbow .slot.revealed { animation: rainbow-pop .6s cubic-bezier(.34, 1.56, .64, 1) backwards, rainbow-slide 3s .6s linear infinite; }
 @keyframes rainbow-pop { from { transform: scale(.3) rotate(-30deg); opacity: 0; } to { transform: none; opacity: 1; } }
+/* Défilement propre aux skins qui utilisaient le rouleau commun (2026-09-23). */
+/* Jersey : le numéro flotte comme un maillot au vent. */
+.skin-jersey .slot.spinning { opacity: .8; animation: jersey-flutter .34s ease-in-out infinite alternate; transform-origin: 50% 0; }
+@keyframes jersey-flutter { 0% { transform: skewX(-9deg) scaleY(.94); } 50% { transform: skewX(4deg) scaleY(1.03); } 100% { transform: skewX(9deg) scaleY(.96); } }
+/* Gold : chaque chiffre tourne sur lui-même comme une pièce lancée. */
+.skin-gold .slot.spinning { opacity: 1; animation: gold-coin .32s linear infinite; }
+@keyframes gold-coin { 0% { transform: perspective(200px) rotateY(0); filter: brightness(1); } 25% { filter: brightness(1.7); } 50% { transform: perspective(200px) rotateY(180deg); filter: brightness(.7); } 100% { transform: perspective(200px) rotateY(360deg); filter: brightness(1); } }
+/* Fire : les flammes lèchent le chiffre et le font trembler vers le haut. */
+.skin-fire .slot.spinning { opacity: 1; transform-origin: 50% 100%; animation: fire-lick .16s ease-in-out infinite alternate, fire-flicker .4s linear infinite alternate; }
+@keyframes fire-lick { 0% { transform: scaleY(.92) translateY(.03em) skewX(-3deg); filter: brightness(1); } 100% { transform: scaleY(1.1) translateY(-.05em) skewX(3deg); filter: brightness(1.5) drop-shadow(0 -2px 4px #f97316); } }
+/* Galaxy : le chiffre scintille et gravite comme une étoile. */
+.skin-galaxy .slot.spinning { opacity: 1; animation: star-twinkle .45s ease-in-out infinite; }
+@keyframes star-twinkle {
+  0%, 100% { transform: translate(0, 0) scale(.9); opacity: .45; text-shadow: 0 0 4px #a78bfa; }
+  25% { transform: translate(.04em, -.04em); }
+  50% { transform: translate(0, -.06em) scale(1.05); opacity: 1; text-shadow: 0 0 6px #fff, 0 0 16px #c4b5fd, .3em -.3em 2px rgba(255, 255, 255, .6); }
+  75% { transform: translate(-.04em, -.03em); }
+}
+/* Chrome : des reflets balaient le métal à toute vitesse. */
+.skin-chrome .slot.spinning { opacity: 1; animation: chrome-flash .5s linear infinite; }
+@keyframes chrome-flash { 0% { background-position: 0 0; filter: brightness(.9); } 50% { filter: brightness(1.6); } 100% { background-position: 250% 0; filter: brightness(.9); } }
+/* Rainbow : les couleurs tourbillonnent et le chiffre ondule. */
+.skin-rainbow .slot.spinning { opacity: 1; animation: rainbow-slide .5s linear infinite, rainbow-wobble .3s ease-in-out infinite alternate; }
+@keyframes rainbow-wobble { from { transform: rotate(-8deg) scale(.95); filter: hue-rotate(0deg) saturate(1.4); } to { transform: rotate(8deg) scale(1.05); filter: hue-rotate(180deg) saturate(1.4); } }
 @media (prefers-reduced-motion: reduce) {
   [class*="skin-"] .slot.spinning, [class*="skin-"] .slot.revealed { animation: none; }
 }
