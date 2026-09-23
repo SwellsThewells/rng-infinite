@@ -43,9 +43,20 @@
         clearTimeout(timer);
       }
     },
-    roll() {
+    // duel : id du duel dans lequel compte ce tirage (facultatif).
+    roll(duel) {
       const p = Store.player;
-      return this.request('/api/roll', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name }) });
+      return this.request('/api/roll', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, name: p.name, duel: duel || undefined }) });
+    },
+    duel(id) {
+      return this.request(`/api/duel?id=${encodeURIComponent(id)}&me=${Store.player.id}`);
+    },
+    duels() {
+      return this.request(`/api/duel?me=${Store.player.id}`);
+    },
+    createDuel(opponent) {
+      const p = Store.player;
+      return this.request('/api/duel', { method: 'POST', body: JSON.stringify({ playerId: p.id, secret: p.secret, opponent }) });
     },
     leaderboard(period) {
       return this.request(`/api/leaderboard?period=${period}&me=${Store.player.id}`);
@@ -103,6 +114,13 @@
     if (s < 172800) return 'yesterday';
     if (s < 7 * 86400) return Math.floor(s / 86400) + 'd ago';
     return new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  }
+  function relFuture(t) {
+    const s = (t - Date.now()) / 1000;
+    if (s <= 0) return 'now';
+    if (s < 3600) return `in ${Math.max(1, Math.round(s / 60))} min`;
+    if (s < 86400) return `in ${Math.round(s / 3600)} h`;
+    return `in ${plural(Math.round(s / 86400), 'day')}`;
   }
   const fullDate = t => new Date(t).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 
@@ -307,8 +325,10 @@
     return lines.join('\n');
   }
 
-  async function share(a) {
-    const text = shareText(a);
+  const share = a => shareOrCopy(shareText(a));
+
+  // Téléphone : feuille de partage du système. Ordinateur : presse-papiers, ou le texte sélectionné s'il est refusé.
+  async function shareOrCopy(text, title = 'Share') {
     const touch = window.matchMedia('(pointer: coarse)').matches;
     if (touch && navigator.share) {
       try { await navigator.share({ text }); } catch (e) { /* annulé */ }
@@ -319,7 +339,7 @@
       toast('Copied to clipboard');
     } catch (e) {
       // Presse-papiers refusé par le navigateur : on montre le texte déjà sélectionné, prêt à copier.
-      openModal(`<h2>Share</h2><p class="panel-note" style="margin:-.3rem 0 .6rem">Copy this text (Cmd/Ctrl + C) and paste it anywhere.</p>
+      openModal(`<h2>${esc(title)}</h2><p class="panel-note" style="margin:-.3rem 0 .6rem">Copy this text (Cmd/Ctrl + C) and paste it anywhere.</p>
         <textarea class="input" style="width:100%;height:12rem;padding:.6rem;font-family:var(--font-mono)" readonly>${esc(text)}</textarea>`, m => {
         const area = m.querySelector('textarea');
         area.focus();
@@ -620,6 +640,7 @@
             press <kbd>Space</kbd>
           </p>
           <div id="today-slot"></div>
+          <div id="duels-slot"></div>
           ${best >= 0 ? featureCardHTML(best) : ''}
           ${recent.length > 1 ? `
             <div class="recent-strip">
@@ -633,6 +654,7 @@
     const pick = $('#pick-name');
     if (pick) pick.addEventListener('click', openSettings);
     loadTodayCard($('#today-slot'));
+    loadDuelsSlot($('#duels-slot'));
   }
 
   function featureCardHTML(i) {
@@ -868,17 +890,22 @@
   // on tire en local : le tirage reste dans l'historique mais pas au classement.
   // Rien ne se saute : pendant la révélation, Espace est ignoré ; une fois la rareté affichée, il relance.
   let rollPending = false;
+  // Duel lancé depuis sa page : "Roll again" et Espace continuent le duel ; son dernier tirage fait, ils ramènent au duel.
+  let activeDuel = null; // { id, opponent, rolled, size }
   async function startRoll(force) {
     if (rollPending) return;
     if (session && !session.finished && force !== true && !session.canReroll) return;
     if (!Store.player.name) { askName(() => startRoll(force)); return; }
+    if (activeDuel && activeDuel.rolled >= activeDuel.size) { openDuel(activeDuel.id); return; }
+    const duel = activeDuel;
     rollPending = true;
     const buttons = Array.from(document.querySelectorAll('#roll-btn, #r-again'));
     buttons.forEach(b => { b.disabled = true; });
     let n, online = null;
     try {
-      online = await Online.roll();
+      online = await Online.roll(duel && duel.id);
       n = online.n;
+      if (duel && online.duel) duel.rolled = online.duel.rolled;
     } catch (err) {
       if (err.status === 409) {
         rollPending = false;
@@ -895,6 +922,14 @@
         buttons.forEach(b => { b.disabled = false; });
         toast(err.status === 429 ? 'Wait for the reveal to finish'
           : wasGoogle ? 'Session expired: sign in with Google again to get your player back' : 'Player id reset, roll again');
+        return;
+      }
+      // Un tirage de duel doit passer par le serveur : pas de tirage local de secours.
+      if (duel) {
+        rollPending = false;
+        buttons.forEach(b => { b.disabled = false; });
+        toast(err.status === 422 ? err.message : 'Duel unavailable right now, try again');
+        if (err.status === 422) openDuel(duel.id);
         return;
       }
       n = Engine.roll();
@@ -914,7 +949,7 @@
     const index = Store.rolls.length - 1;
     Collection.add(Store.rolls[index], index);
     if (!saved) toast('Could not save — storage is full. Export your history from the player menu.');
-    session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index, online });
+    session = playReveal({ n, a, previous, newIds: isFirst ? null : newIds, isFirst, lifetimeBefore, index, online, duel: duel && { ...duel } });
   }
 
   function notesHTML(ctx, a) {
@@ -945,11 +980,15 @@
     const padded = a.str.padStart(slotCount, '0');
     const lead = slotCount - a.str.length;
     const ascending = a.groups.slice().reverse();
+    const duel = ctx.duel;
+    const duelLeft = duel ? duel.size - duel.rolled : 0;
+    const againLabel = !duel ? 'Roll again' : duelLeft ? `Next duel roll (${duelLeft} left)` : 'See the duel';
 
     app.innerHTML = `
       <div class="vignette" id="r-vignette"></div>
       <div class="page">
         <section class="result" data-tier="${a.tier}">
+          ${duel ? `<div class="duel-banner">⚔️ Duel vs <b>${esc(duel.opponent)}</b> · roll ${duel.rolled}/${duel.size}</div>` : ''}
           <div class="num-card lg neutral charging" id="num-card">
             ${Array.from({ length: slotCount }, () => '<span class="slot spinning">0</span>').join('')}
           </div>
@@ -961,7 +1000,7 @@
           </div>
           <div class="result-actions invisible" id="r-actions">
             <button class="btn" id="r-share">${shareIcon()} Share</button>
-            <button class="btn-roll small" id="r-again">Roll again</button>
+            <button class="btn-roll small" id="r-again">${againLabel}</button>
           </div>
           <p class="hint invisible" id="r-hint"></p>
           <div id="r-notes" style="text-align:center"></div>
@@ -1034,7 +1073,7 @@
       countUp(ep, 0, a.total, 0, v => `${fmt(v)} XP`);
       FX.celebrate(a.tier, card);
       show($('#r-actions'), 'fade-in');
-      $('#r-hint').innerHTML = '<kbd>Space</kbd> to roll again · click a badge name for details';
+      $('#r-hint').innerHTML = `<kbd>Space</kbd> ${!duel ? 'to roll again' : duelLeft ? 'for the next duel roll' : 'to see the duel'} · click a badge name for details`;
       show($('#r-hint'), 'fade-in');
       document.body.classList.remove('locked');
       canReroll = true;
@@ -1466,9 +1505,12 @@
         <h1 class="page-title" id="p-title">${esc(name)}</h1>
         <div id="p-body"><div class="empty">Loading…</div></div>
       </div>`;
-    let p;
+    // Mon propre profil, calculé de la même façon, pour la comparaison (inutile sur ma page).
+    const self = Store.player.name;
+    const minePromise = self && self.toLowerCase() !== name.toLowerCase() ? Online.profile(self).catch(() => null) : Promise.resolve(null);
+    let p, mine;
     try {
-      p = await Online.profile(name);
+      [p, mine] = await Promise.all([Online.profile(name), minePromise]);
     } catch (err) {
       if (token === profileToken && currentView === 'profile') {
         $('#p-body').innerHTML = `<div class="empty">${err.status === 404 ? `No player called “${esc(name)}”.` : 'Profile unavailable right now.'}</div>`;
@@ -1486,6 +1528,7 @@
     $('#p-title').innerHTML = `${esc(p.name)}${me ? ' <span class="muted">(you)</span>' : ''}`;
     $('#p-body').innerHTML = `
       <p class="panel-note profile-sub">${p.rolls ? `Playing since ${day(p.since)} · last roll ${relTime(p.last)}` : 'No rolls yet'}</p>
+      ${me ? '' : `<div class="profile-actions"><button class="btn-roll small" id="p-duel">⚔️ Challenge to a duel</button></div>`}
       <div class="tiles">
         ${tile('Rolls', fmt(p.rolls), p.rolls ? `${fmt(p.lifetime / p.rolls)} XP per roll` : '–')}
         ${tile('Lifetime XP', compact(p.lifetime), `${fmt(p.lifetime)} XP`)}
@@ -1493,6 +1536,7 @@
         ${tile('All-time rank', p.rank ? '#' + p.rank : '–', 'best single roll')}
         ${tile('Badges', `${found}/${total}`, `${((found / total) * 100).toFixed(0)}% of the collection`)}
       </div>
+      ${!me && mine ? compareHTML(mine, p) : ''}
       <div class="panel">
         <div class="panel-head"><h3 class="panel-title">Best rolls</h3><span class="panel-note">click a number for its badges</span></div>
         ${p.best.length ? `<div class="records">${p.best.map((x, k) => {
@@ -1512,6 +1556,220 @@
         ${collectionHTML(found, collectionState)}
       </div>`;
     mountCollection(profileCollection(p.badges), collectionState);
+    if (!me) $('#p-duel').addEventListener('click', () => challenge(p.name));
+  }
+
+  // Comparaison complète avec un autre joueur (deux profils calculés par le serveur) :
+  // chaque ligne met en valeur le meilleur des deux, puis le score, les meilleurs tirages et les badges de chacun.
+  function compareHTML(mine, theirs) {
+    const found = p => Object.keys(p.badges).length;
+    const rarest = p => Object.keys(p.badges).map(id => Engine.byId.get(id)).filter(Boolean).sort((x, y) => y.score - x.score)[0] || null;
+    const day = t => new Date(t).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const bestCell = p => (p.best[0]
+      ? `<span class="mono" data-number="${p.best[0].n}" data-caption="${esc(`${p.name} · best roll`)}" style="cursor:pointer">${analysis(p.best[0].n).str}</span> · ${compact(p.best[0].s)} XP`
+      : '–');
+    const rarestCell = p => { const b = rarest(p); return b ? `<span data-badge="${b.id}" style="cursor:pointer">${b.emoji} ${esc(b.label)}</span>` : '–'; };
+    // [libellé, valeur comparée, affichage, sens] : 1 = plus haut gagne, -1 = plus bas gagne, 0 = pas de gagnant.
+    const rows = [
+      ['Rolls', p => p.rolls, v => fmt(v), 1],
+      ['Lifetime XP', p => p.lifetime, v => compact(v), 1],
+      ['XP per roll', p => (p.rolls ? p.lifetime / p.rolls : 0), v => fmt(v), 1],
+      ['Best roll', p => (p.best[0] ? p.best[0].s : 0), (v, p) => bestCell(p), 1],
+      ['All-time rank', p => p.rank || Infinity, v => (v === Infinity ? '–' : '#' + v), -1],
+      ['Luck (avg percentile)', p => (p.luck == null ? -1 : p.luck), v => (v < 0 ? '–' : v.toFixed(1)), 1],
+      ...['mythic', 'anomaly', 'epic', 'rare'].map(t => [`${cap(t)} rolls`, p => (p.tiers && p.tiers[t]) || 0, v => fmt(v), 1]),
+      ['Badges found', found, v => `${v}/${Engine.badges.length}`, 1],
+      ['Rarest badge', p => (rarest(p) ? rarest(p).score : 0), (v, p) => rarestCell(p), 1],
+      ['Playing since', p => p.since || 0, v => (v ? day(v) : '–'), 0],
+    ];
+    let myWins = 0, theirWins = 0;
+    const body = rows.map(([label, get, show, dir]) => {
+      const a = get(mine), b = get(theirs);
+      const win = dir === 0 || a === b ? 0 : (a > b) === (dir > 0) ? 1 : 2;
+      if (win === 1) myWins++;
+      if (win === 2) theirWins++;
+      return `<div class="compare-row"><span class="k">${label}</span><span class="v${win === 1 ? ' win' : ''}">${show(a, mine)}</span><span class="v${win === 2 ? ' win' : ''}">${show(b, theirs)}</span></div>`;
+    }).join('');
+    const score = myWins === theirWins ? `Tied ${myWins}–${theirWins}`
+      : myWins > theirWins ? `You lead ${myWins}–${theirWins}` : `${esc(theirs.name)} leads ${theirWins}–${myWins}`;
+
+    const mineSet = new Set(Object.keys(mine.badges)), theirSet = new Set(Object.keys(theirs.badges));
+    const onlyThem = [...theirSet].filter(id => !mineSet.has(id));
+    const onlyMe = [...mineSet].filter(id => !theirSet.has(id));
+    const common = [...mineSet].filter(id => theirSet.has(id)).length;
+    const pills = ids => {
+      const list = ids.map(id => Engine.byId.get(id)).filter(Boolean).sort((x, y) => y.score - x.score);
+      if (!list.length) return '<span class="muted">none</span>';
+      return list.slice(0, 40).map(b => `<span class="badge-pill" data-tier="${b.tier}" data-badge="${b.id}" style="cursor:pointer">${b.emoji} ${esc(b.label)}</span>`).join('')
+        + (list.length > 40 ? `<span class="more">+${list.length - 40} more</span>` : '');
+    };
+    const top5 = p => p.best.slice(0, 5).map((x, k) => {
+      const a = analysis(x.n);
+      return `<div class="record" data-number="${x.n}" data-caption="${esc(`${p.name} · ${fullDate(x.t)}`)}"><span class="rank">${k + 1}</span><span class="num-card sm" data-tier="${a.tier}">${a.str}</span><span class="grow"></span><span class="ep-pill">${compact(x.s)} XP</span></div>`;
+    }).join('') || '<div class="empty">No rolls yet.</div>';
+
+    return `
+      <div class="panel">
+        <div class="panel-head"><h3 class="panel-title">You vs ${esc(theirs.name)}</h3><span class="compare-score">${score}</span></div>
+        <div class="compare">
+          <div class="compare-row head"><span></span><span>You</span><span>${esc(theirs.name)}</span></div>
+          ${body}
+        </div>
+        <div class="grid-2 compare-top">
+          <div><div class="eyebrow">Your top 5</div><div class="records">${top5(mine)}</div></div>
+          <div><div class="eyebrow">${esc(theirs.name)}'s top 5</div><div class="records">${top5(theirs)}</div></div>
+        </div>
+        <div class="compare-badges">
+          <div class="eyebrow">Only ${esc(theirs.name)} has (${onlyThem.length})</div>
+          <div class="pill-row left">${pills(onlyThem)}</div>
+          <div class="eyebrow">Only you have (${onlyMe.length})</div>
+          <div class="pill-row left">${pills(onlyMe)}</div>
+          <p class="panel-note">${plural(common, 'badge')} in common</p>
+        </div>
+      </div>`;
+  }
+
+  // ---------------------------------------------------------------- duels
+  // 5 tirages chacun, le plus gros total d'XP gagne. Ce sont des tirages normaux : historique, XP et classement.
+  const duelHref = id => `#/duel/${id}`;
+  let duelTimer = 0, duelToken = 0, duelShown = null;
+
+  function openDuel(id) {
+    if (location.hash === duelHref(id)) route(); else location.hash = duelHref(id);
+  }
+
+  async function challenge(name) {
+    if (!Store.player.name) { askName(() => challenge(name)); return; }
+    try {
+      const r = await Online.createDuel(name);
+      if (r.existing) toast(`You already have a duel running with ${name}`);
+      openDuel(r.id);
+    } catch (err) {
+      toast(err.status === 404 ? `${name} can't be challenged` : 'Could not create the duel, try again');
+    }
+  }
+
+  function duelStatusHTML(d) {
+    const me = d.players.find(p => p.me);
+    if (d.status !== 'active') {
+      if (d.winner === null) return d.status === 'done' ? `🤝 Draw: ${fmt(d.players[0].total)} XP each` : '⌛ Expired: nobody finished in time';
+      const w = d.players[d.winner], l = d.players[1 - d.winner];
+      const who = w.me ? 'You win' : `${esc(w.name)} wins`;
+      return d.forfeit ? `🏆 ${who} by forfeit` : `🏆 ${who} by ${fmt(w.total - l.total)} XP`;
+    }
+    if (me && !me.done) return `Your turn: ${plural(d.size - me.rolls.length, 'roll')} left`;
+    const waiting = d.players.find(p => !p.done);
+    return `Waiting for ${esc(waiting.name)} (${waiting.rolls.length}/${d.size})`;
+  }
+
+  function renderDuel(id) {
+    currentView = 'duel';
+    duelShown = id;
+    app.innerHTML = `
+      <div class="page page-wide">
+        <a class="back-link" href="#/">← Home</a>
+        <h1 class="page-title">Duel</h1>
+        <div id="duel-body"><div class="empty">Loading…</div></div>
+      </div>`;
+    drawDuel(id, ++duelToken);
+  }
+
+  async function drawDuel(id, token) {
+    clearTimeout(duelTimer);
+    let d;
+    try {
+      d = await Online.duel(id);
+    } catch (err) {
+      if (token === duelToken && currentView === 'duel') {
+        $('#duel-body').innerHTML = `<div class="empty">${err.status === 404 ? 'This duel does not exist or has expired.' : 'Duel unavailable right now.'}</div>`;
+      }
+      return;
+    }
+    if (token !== duelToken || currentView !== 'duel') return;
+    const me = d.players.find(p => p.me);
+    const them = d.players.find(p => !p.me);
+    const canRoll = d.status === 'active' && me && !me.done;
+    const side = (p, i) => {
+      const won = d.winner === i;
+      const slots = Array.from({ length: d.size }, (_, k) => {
+        const r = p.rolls[k];
+        if (!r) return `<div class="record duel-empty"><span class="rank">${k + 1}</span><span class="muted">not rolled yet</span></div>`;
+        const a = analysis(r.n);
+        return `
+          <div class="record" data-number="${r.n}" data-caption="${esc(`${p.name} · duel roll ${k + 1}`)}">
+            <span class="rank">${k + 1}</span>
+            <span class="num-card sm" data-tier="${a.tier}">${a.str}</span>
+            <span class="grow">${a.groups.slice(0, 2).map(g => `${g.badge.emoji} ${esc(g.badge.label)}`).join(' · ')}</span>
+            <span class="ep-pill">${compact(r.s)} XP</span>
+          </div>`;
+      }).join('');
+      return `
+        <div class="panel duel-side${won ? ' won' : ''}">
+          <div class="panel-head"><a class="player-link" href="${profileHref(p.name)}">${won ? '🏆 ' : ''}${esc(p.name)}</a>${p.me ? '<span class="muted">(you)</span>' : ''}</div>
+          <div class="duel-total mono">${fmt(p.total)} XP</div>
+          <div class="panel-note">${p.rolls.length}/${d.size} rolls</div>
+          <div class="records">${slots}</div>
+        </div>`;
+    };
+    const timing = d.status === 'active' ? `ends ${relFuture(d.endsAt)}` : `started ${relTime(d.created)}`;
+    $('#duel-body').innerHTML = `
+      <p class="panel-note profile-sub">${esc(d.players[0].name)} vs ${esc(d.players[1].name)} · ${d.size} rolls each, the highest total XP wins · ${timing}</p>
+      <div class="duel-status">${duelStatusHTML(d)}</div>
+      <div class="profile-actions">
+        ${canRoll ? `<button class="btn-roll small" id="duel-roll">⚔️ Duel roll (${d.size - me.rolls.length} left)</button>` : ''}
+        <button class="btn" id="duel-link">Share duel link</button>
+      </div>
+      <div class="grid-2">${d.players.map(side).join('')}</div>
+      <p class="panel-note" style="text-align:center">Duel rolls are normal rolls: they stay in your history and count on the leaderboard.</p>`;
+    if (canRoll) {
+      $('#duel-roll').addEventListener('click', () => {
+        activeDuel = { id: d.id, opponent: them.name, rolled: me.rolls.length, size: d.size };
+        startRoll(true);
+      });
+    }
+    $('#duel-link').addEventListener('click', () => {
+      const url = location.origin + location.pathname + duelHref(d.id);
+      shareOrCopy(`⚔️ ${d.players[0].name} vs ${d.players[1].name} on RNG∞: ${d.size} rolls each, highest XP wins\n${url}`, 'Duel link');
+    });
+    // Rafraîchi toutes les 20 s tant que le duel tourne et que l'onglet est visible (quota de la base).
+    if (d.status === 'active' && !document.hidden) duelTimer = setTimeout(() => { if (currentView === 'duel') drawDuel(id, duelToken); }, 20000);
+  }
+
+  // Accueil : duels en cours (ton tour d'abord) et ceux terminés depuis moins de 3 jours.
+  async function loadDuelsSlot(slot) {
+    if (!Store.player.name) return;
+    let list;
+    try {
+      list = (await Online.duels()).duels;
+    } catch (err) {
+      return;
+    }
+    if (!slot.isConnected) return;
+    const recent = Date.now() - 3 * 86400000;
+    const rows = list.map(d => {
+      const me = d.players.find(p => p.me), them = d.players.find(p => !p.me);
+      if (!me || !them) return null;
+      const last = Math.max(d.created, ...d.players.flatMap(p => p.rolls.map(r => r.t)));
+      if (d.status !== 'active' && last < recent) return null;
+      const mine = d.players.indexOf(me);
+      let state, cls = '', order = 2;
+      if (d.status === 'active') {
+        if (!me.done) { state = `Your turn · ${me.rolls.length}/${d.size}`; cls = ' turn'; order = 0; } else { state = `Waiting for ${them.name}`; order = 1; }
+      } else if (d.winner === null) {
+        state = d.status === 'done' ? 'Draw' : 'Expired';
+      } else {
+        const won = d.winner === mine;
+        state = (won ? 'Won' : 'Lost') + (d.forfeit ? ' (forfeit)' : '');
+        cls = won ? ' won' : ' lost';
+      }
+      return { order, last, html: `
+        <a class="duel-row${cls}" href="${duelHref(d.id)}">
+          <span>⚔️ vs <b>${esc(them.name)}</b></span>
+          <span class="mono">${compact(me.total)} – ${compact(them.total)}</span>
+          <span class="duel-state">${esc(state)}</span>
+        </a>` };
+    }).filter(Boolean).sort((x, y) => x.order - y.order || y.last - x.last);
+    slot.innerHTML = rows.length ? `<div class="duel-list"><div class="eyebrow">Your duels</div>${rows.map(r => r.html).join('')}</div>` : '';
   }
 
   // ---------------------------------------------------------------- leaderboard / à propos
@@ -1603,7 +1861,8 @@
         <div class="rarity-table">${badgeRows.map(([t, l]) => `${tierPill(t)}<span>${l}</span>`).join('')}</div>
         <h2 class="panel-title">Your data</h2>
         <p>Numbers are drawn by the server, so nobody can pick their own 1337. Your best roll of the day, the week and all time goes on the leaderboard under your player name.</p>
-        <p>Click a name on the leaderboard to see that player's profile: best rolls and badge collection.</p>
+        <p>Click a name on the leaderboard to see that player's profile (best rolls, badge collection) and compare it with yours.</p>
+        <p>Challenge a friend to a duel from their profile: 5 rolls each, the highest total XP wins. Duel rolls are normal rolls, so they stay in your history and can make the leaderboard.</p>
         <p>Sign in with Google to keep your history, stats and badges on every device. You can also export them (JSON) from the player menu.</p>
         <p class="muted">Based on the daily game <a href="https://www.rngdle.com" target="_blank" rel="noopener">rngdle.com</a>: this version removes the daily limit and adds history, stats, Google sign-in and a leaderboard between friends.</p>
         <p class="muted"><a href="privacy.html">Privacy policy</a></p>
@@ -1618,10 +1877,13 @@
     if (session && !session.finished) session.cancel();
     FX.clear();
     clearTimeout(lbTimer);
+    clearTimeout(duelTimer);
+    activeDuel = null;
     closeModal();
     tip.hidden = true;
     const [key, ...rest] = location.hash.replace(/^#\/?/, '').split('?')[0].split('/');
     if (key === 'player' && rest.length) renderProfile(decodeURIComponent(rest.join('/')));
+    else if (key === 'duel' && rest.length) renderDuel(rest[0]);
     else (ROUTES[key] || renderHome)();
     const navKey = key === 'player' ? 'leaderboard' : key;
     document.querySelectorAll('.nav a').forEach(a => a.classList.toggle('active', a.dataset.route === navKey));
@@ -1684,6 +1946,7 @@
 
   document.addEventListener('visibilitychange', () => {
     if (!document.hidden && currentView === 'leaderboard') drawLeaderboard();
+    if (!document.hidden && currentView === 'duel' && duelShown) drawDuel(duelShown, duelToken);
   });
 
   window.addEventListener('hashchange', route);

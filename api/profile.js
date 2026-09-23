@@ -2,19 +2,9 @@
 // Profil public d'un joueur, ouvert depuis le classement : ses meilleurs tirages et sa collection de badges.
 // Calculé à partir de son historique (hist:<id>), comme ses propres pages History et Badges ; le classement,
 // lui, ne compte que les tirages faits par le serveur. Ni l'identifiant ni la liste complète des tirages ne sortent d'ici.
-const { engine, redis, cleanName, nameKey, historyKey, rollSet, cors, send } = require('./_lib');
+const { engine, redis, cleanName, findPlayer, historyKey, rollSet, cors, send } = require('./_lib');
 
 const BEST_LIMIT = 10;
-
-// Nom → id. Les joueurs qui n'ont pas tiré depuis l'arrivée des noms uniques n'ont que le hash "names".
-async function findPlayer(name) {
-  const key = nameKey(name);
-  const [id] = await redis([['GET', `name:${key}`]]);
-  if (id) return id;
-  const [flat] = await redis([['HGETALL', 'names']]);
-  for (let i = 0; i < (flat || []).length; i += 2) if (nameKey(flat[i + 1]) === key) return flat[i];
-  return null;
-}
 
 module.exports = async (req, res) => {
   if (cors(req, res)) return;
@@ -45,11 +35,13 @@ module.exports = async (req, res) => {
     // ~20 µs par nombre distinct : 2 s au pire pour un historique plein (100 000 tirages).
     const analyses = new Map();
     const analyze = n => analyses.get(n) || (analyses.set(n, engine.analyze(n)), analyses.get(n));
-    let lifetime = 0;
-    const badges = {};
+    let lifetime = 0, percentileSum = 0;
+    const badges = {}, tiers = {};
     for (const [, n] of rolls) {
       const a = analyze(n);
       lifetime += a.total;
+      percentileSum += a.percentile;
+      tiers[a.tier] = (tiers[a.tier] || 0) + 1;
       for (const b of a.earnedIds) {
         if (badges[b]) badges[b][0]++;
         else badges[b] = [1, n];
@@ -67,6 +59,9 @@ module.exports = async (req, res) => {
       since: rolls.length ? rolls[0][0] : null,
       last: rolls.length ? rolls[rolls.length - 1][0] : null,
       rank: rank === null ? null : Number(rank) + 1,
+      // Chance = percentile moyen des tirages (50 attendu) ; tiers = nombre de tirages par rareté de carte.
+      luck: rolls.length ? Math.round((percentileSum / rolls.length) * 10) / 10 : null,
+      tiers,
       best,
       badges,
     });

@@ -259,4 +259,79 @@ assert.equal((await call(profile, { url: '/api/profile?name=Nobody' })).status, 
 assert.equal((await call(profile, { url: '/api/profile' })).status, 400);
 assert.equal((await call(profile, { method: 'POST' })).status, 405);
 
+// 12. Duels : tirages normaux (historique, compteurs, classement) comptés en plus dans le duel.
+const duelApi = require(path.join(ROOT, 'api/duel.js'));
+const createDuel = (who, opponent) => call(duelApi, { method: 'POST', body: { playerId: who.playerId, secret: who.secret, opponent } });
+const bobNow = { ...bob, name: 'Sacha' };
+r = await createDuel(alice, 'sacha');
+assert.equal(r.status, 200, JSON.stringify(r.body));
+const duelId = r.body.id;
+assert.match(duelId, /^[A-Za-z0-9_-]{8}$/);
+assert.equal((await createDuel(bobNow, 'Alice')).body.id, duelId, 'un seul duel en cours par paire, dans les deux sens');
+assert.equal((await createDuel(alice, 'Alice')).status, 400);
+assert.equal((await createDuel(alice, 'Personne')).status, 404);
+assert.equal((await createDuel({ ...alice, secret: '9'.repeat(32) }, 'Sacha')).status, 403);
+
+const duelRoll = (who, id = duelId) => {
+  db.delete(`cooldown:${who.playerId}`);
+  return call(roll, { method: 'POST', body: { ...who, duel: id } });
+};
+const histBefore = (await call(history, { method: 'POST', body: aliceTab })).body.rolls.length;
+const countBefore = (await call(leaderboard, { url: '/api/leaderboard?period=all' })).body.entries.find(e => e.name === 'Alice').rolls;
+const aliceDuel = [];
+for (let k = 1; k <= 5; k++) {
+  r = await duelRoll(alice);
+  assert.equal(r.status, 200, JSON.stringify(r.body));
+  assert.deepEqual(r.body.duel, { id: duelId, rolled: k, size: 5 });
+  aliceDuel.push(r.body);
+}
+r = await call(history, { method: 'POST', body: aliceTab });
+assert.equal(r.body.rolls.length, histBefore + 5, 'les tirages de duel sont dans l\'historique');
+r = await call(leaderboard, { url: '/api/leaderboard?period=all' });
+assert.equal(r.body.entries.find(e => e.name === 'Alice').rolls, countBefore + 5, 'et comptent au classement');
+r = await duelRoll(alice);
+assert.equal(r.status, 422, 'pas de 6e tirage');
+assert.equal(db.has(`cooldown:${alice.playerId}`), false, 'un tirage refusé ne déclenche pas le délai');
+
+const carol = { playerId: 'd'.repeat(16), secret: '4'.repeat(32), name: 'Carol' };
+db.delete(`cooldown:${carol.playerId}`);
+assert.equal((await call(roll, { method: 'POST', body: carol })).status, 200);
+assert.equal((await duelRoll(carol)).status, 422, 'Carol n\'est pas dans ce duel');
+assert.equal((await duelRoll(carol, 'nope')).status, 422);
+
+r = await call(duelApi, { url: `/api/duel?id=${duelId}&me=${alice.playerId}` });
+assert.equal(r.status, 200);
+assert.equal(r.body.status, 'active');
+assert.deepEqual(r.body.players.map(p => [p.name, p.me, p.rolls.length, p.done]), [['Alice', true, 5, true], ['Sacha', false, 0, false]]);
+assert.equal(r.body.players[0].total, aliceDuel.reduce((x, y) => x + y.s, 0));
+assert.ok(!JSON.stringify(r.body).includes(alice.playerId) && !JSON.stringify(r.body).includes(bob.playerId), 'aucun id dans un duel');
+
+const bobDuel = [];
+for (let k = 0; k < 5; k++) bobDuel.push((await duelRoll(bobNow)).body);
+r = await call(duelApi, { url: `/api/duel?id=${duelId}` });
+assert.equal(r.body.status, 'done');
+const [ta, tb] = [aliceDuel, bobDuel].map(list => list.reduce((x, y) => x + y.s, 0));
+assert.equal(r.body.winner, ta === tb ? null : ta > tb ? 0 : 1);
+assert.ok(r.body.players.every(p => !p.me));
+r = await call(duelApi, { url: `/api/duel?me=${bob.playerId}` });
+assert.deepEqual(r.body.duels.map(d => d.id), [duelId]);
+assert.equal(r.body.duels[0].players[1].me, true);
+assert.notEqual((await createDuel(alice, 'Sacha')).body.id, duelId, 'duel fini : on peut en relancer un');
+
+// Échéance : 7 jours pour jouer ; celui qui a fini ses tirages gagne par forfait.
+r = await createDuel(alice, 'Carol');
+const lateId = r.body.id;
+run([['HSET', `duel:${lateId}`, 'created', String(Date.now() - 8 * 86400000)]]);
+assert.equal((await duelRoll(alice, lateId)).status, 422, 'duel expiré');
+run([['RPUSH', `duel:${lateId}:b`, ...[1, 2, 3, 4, 5].map(k => `${t0 + k}:${k}`)]]);
+r = await call(duelApi, { url: `/api/duel?id=${lateId}` });
+assert.deepEqual([r.body.status, r.body.winner, r.body.forfeit], ['expired', 1, true]);
+assert.equal((await call(duelApi, { url: '/api/duel?id=zzzzzzzz' })).status, 404);
+assert.equal((await call(duelApi, { url: '/api/duel' })).status, 400);
+
+// Profil : raretés et chance pour la comparaison.
+r = await call(profile, { url: '/api/profile?name=Alice' });
+assert.equal(Object.values(r.body.tiers).reduce((x, y) => x + y, 0), r.body.rolls);
+assert.ok(r.body.luck >= 0 && r.body.luck <= 100);
+
 console.log(`OK —${calls} allers-retours Redis simulés, tirages ${aliceFirst.n} (${aliceFirst.s} XP) et ${bobFirst.n} (${bobFirst.s} XP)`);

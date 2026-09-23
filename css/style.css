@@ -825,3 +825,38 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
   .btn-roll, .num-card::after, .qmarks span { animation: none; }
   .badge-card.reveal, .slot.revealed, .num-card.shake, .fade-in { animation: none; }
 }
+
+/* comparaison de deux joueurs (profil) */
+.profile-actions { display: flex; flex-wrap: wrap; gap: .5rem; margin: 0 0 1rem; }
+.compare-score { font-size: .78rem; font-weight: 700; color: var(--prose-2); }
+.compare-row { display: grid; grid-template-columns: minmax(7rem, 1.2fr) 1fr 1fr; gap: .6rem; align-items: center; padding: .42rem 0; border-top: 1px solid var(--outline); font-size: .8rem; }
+.compare-row.head { border-top: 0; padding-top: 0; font-size: .66rem; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--prose-3); }
+.compare-row .k { color: var(--prose-2); }
+.compare-row .v { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compare-row .v.win { font-weight: 700; color: var(--success); }
+.compare-row .v.win::before { content: '▲ '; font-size: .6rem; }
+.compare-top { margin-top: 1rem; }
+.compare-top .eyebrow, .compare-badges .eyebrow { margin: .9rem 0 .5rem; }
+.pill-row.left { justify-content: flex-start; }
+
+/* duels */
+.duel-banner { display: inline-block; margin-bottom: .9rem; padding: .35rem .8rem; border: 1px solid var(--outline); border-radius: 999px; background: var(--surface); font-size: .78rem; }
+.duel-status { font-size: 1.05rem; font-weight: 800; margin: 0 0 .9rem; }
+.duel-side.won { border-color: var(--ep-outline); box-shadow: 0 0 0 2px var(--ep-outline); }
+.duel-total { font-size: 1.5rem; font-weight: 700; margin-bottom: .1rem; }
+.duel-side .records { margin-top: .7rem; }
+.duel-empty { cursor: default; font-size: .72rem; }
+.duel-list { margin: 1.2rem auto 0; max-width: 30rem; text-align: left; }
+.duel-list .eyebrow { margin-bottom: .45rem; text-align: center; }
+.duel-row { display: grid; grid-template-columns: 1fr auto auto; gap: .7rem; align-items: center; padding: .55rem .8rem; margin-top: .35rem; border: 1px solid var(--outline); border-radius: .6rem; background: var(--surface); font-size: .8rem; text-decoration: none; }
+.duel-row:hover { background: var(--surface-dim); }
+.duel-row .duel-state { font-size: .7rem; color: var(--prose-3); white-space: nowrap; }
+.duel-row.turn { border-color: var(--chart-accent); }
+.duel-row.turn .duel-state { color: var(--chart-accent); font-weight: 700; }
+.duel-row.won .duel-state { color: var(--success); font-weight: 700; }
+.duel-row.lost .duel-state { color: var(--danger); }
+@media (max-width: 560px) {
+  .compare-row { grid-template-columns: 5.5rem 1fr 1fr; font-size: .74rem; }
+  .duel-row { grid-template-columns: 1fr auto; }
+  .duel-row .mono { display: none; }
+}

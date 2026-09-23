@@ -15,7 +15,8 @@ plus custom badges defined in `tools/source/custom.json` — currently **Drastix
 - **Stats**: rarity distribution vs. expected odds, XP per roll, digit frequency, streaks without a Rare
 - **Collection** of all 233 badges with a counter, first roll and odds for each badge
 - Previously rolled numbers are flagged, new badges are marked **NEW**
-- Online **leaderboard** with clickable **player profiles** (best rolls and badge collection of each friend)
+- Online **leaderboard** with clickable **player profiles** (best rolls and badge collection of each friend), and a full **side-by-side comparison** with yours
+- **Duels**: challenge a friend to 5 rolls each, highest total XP wins. Duel rolls are normal server rolls, so they stay in your history and can make the leaderboard
 - JSON export/import of the history, 3 badge reveal speeds, light/dark theme
 
 ## Faithful to the original game
@@ -71,6 +72,7 @@ Hosted on Vercel, deployed on every push to `main`.
 - `POST /api/auth`: **Sign in with Google** (Google Identity Services). The server checks the ID token against Google's public keys, links the Google account to a player and gives each device its own secret, so the same account gets the same player on every device. Only the Google account ID is stored, never the email ([privacy policy](https://rng-infinite.vercel.app/privacy.html)).
 - `POST /api/history`: the player's full roll history, so history, stats and badges follow a Google account on every device. Online rolls are added by `/api/roll`; on sign-in each device uploads the rolls only it had, and downloads the rest. Signing out only clears the device once every roll is confirmed on the account.
 - `GET /api/profile?name=`: a player's **public profile**, opened by clicking a name on the leaderboard: 10 best rolls, badge collection, roll count, lifetime XP and all-time rank, computed from their history. Players without Google also upload their local rolls for it. Player ids and the full history never leave the server.
+- `POST /api/duel` / `GET /api/duel?id=` / `GET /api/duel?me=`: create a duel against a player (one running duel per pair), read one, or list a player's last 10. Duel rolls go through `POST /api/roll` with `duel: <id>`, checked before the 8 s cooldown; 7 days to play, and whoever finished wins by forfeit after that.
 - Storage: Upstash Redis (Vercel Marketplace, free plan), one sorted set per period.
 - Since rolls are unlimited, players are ranked by their **best single roll**, not by total XP.
 - Each browser gets a random player id and a secret; only the holder of the secret can roll under that id. An 8 s cooldown matches the length of a reveal.
