@@ -132,7 +132,10 @@
   const Ach = window.RNGAchievements;
   const titleHTML = id => {
     const a = id && Ach.byId.get(id);
-    return a ? `<span class="title-pill${a.hidden ? ' special' : ''}" title="${esc(a.desc)}">${a.emoji} <span class="t">${esc(a.title)}</span></span>` : '';
+    if (!a) return '';
+    // Titre du créateur : le mot seul, en rouge béryl, sans pastille autour.
+    if (a.hidden) return `<span class="title-owner" title="${esc(a.desc)}">${esc(a.title)}</span>`;
+    return `<span class="title-pill" title="${esc(a.desc)}">${a.emoji} <span class="t">${esc(a.title)}</span></span>`;
   };
 
   function noteAchievements(list) {
@@ -1678,7 +1681,7 @@
   const XP_TARGETS = [25000, 50000, 100000, 250000, 1000000];
   const Room = { code: null, token: 0, timer: 0, offset: 0, rtt: Infinity, data: null, shown: 0, anim: null, view: null, sig: '', changedAt: 0, reactSeen: new Set(), reactBusy: false, achNoted: false };
   const REACTIONS = ['🔥', '😂', '😭', '💀', '😱', '🎉'];
-  const titleEmoji = id => (id && Ach.byId.get(id) ? ` ${Ach.byId.get(id).emoji}` : '');
+  const titleEmoji = id => (id && Ach.byId.get(id) && !Ach.byId.get(id).hidden ? ` ${Ach.byId.get(id).emoji}` : '');
   const goalText = d => (d.mode === 'xp' ? `first to ${compact(d.target)} XP` : `first to ${plural(d.target, 'round win')}`);
 
   // Derniers réglages choisis, retenus sur l'appareil.

@@ -895,9 +895,9 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 /* titres et succès */
 .title-pill { display: inline-flex; align-items: center; gap: .25rem; margin-left: .4rem; padding: .08rem .45rem; border: 1px solid var(--ep-outline); border-radius: 999px; background: var(--ep-surface); color: var(--ep-text); font-size: .64rem; font-weight: 700; letter-spacing: .02em; text-transform: none; white-space: nowrap; vertical-align: middle; }
 .page-title .title-pill { font-size: .9rem; letter-spacing: 0; }
-.title-pill.special { border-color: transparent; color: #fff; background: linear-gradient(90deg, #ef4444, #f59e0b, #10b981, #3b82f6, #a855f7); background-size: 300% 100%; animation: owner-shine 6s linear infinite; text-shadow: 0 1px 1px rgba(0, 0, 0, .35); }
-@keyframes owner-shine { to { background-position: 300% 0; } }
-@media (prefers-reduced-motion: reduce) { .title-pill.special { animation: none; } }
+.title-owner { margin-left: .45rem; color: #be123c; font-size: .74rem; font-weight: 800; letter-spacing: .02em; text-transform: none; white-space: nowrap; vertical-align: middle; }
+.dark .title-owner { color: #f43f5e; }
+.page-title .title-owner { font-size: 1rem; }
 .lb-who { display: flex; align-items: center; min-width: 0; }
 .lb-who .lb-name { flex: 0 1 auto; }
 .ach-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(15rem, 1fr)); gap: .5rem; }
