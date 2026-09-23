@@ -146,6 +146,83 @@
     return id && id !== 'classic' && Shop.byId.has(id) ? ` skin-${id}` : '';
   };
   const slotsHTML = str => str.split('').map(c => `<span class="slot">${c}</span>`).join('');
+
+  // Skin Matrix : chaque carte reçoit un canvas derrière ses chiffres, avec des colonnes de caractères (katakana et
+  // chiffres) qui tombent à des vitesses différentes, tête presque blanche, traînée verte qui s'efface, comme dans le film.
+  const MatrixRain = (() => {
+    const GLYPHS = 'ｱｲｳｴｵｶｷｸｹｺｻｼｽｾｿﾀﾁﾂﾃﾄﾅﾆﾇﾈﾉﾊﾋﾌﾍﾎﾏﾐﾑﾒﾓﾔﾕﾖﾗﾘﾙﾚﾛﾜﾝ0123456789:.=*+-<>¦';
+    const glyph = () => GLYPHS[(Math.random() * GLYPHS.length) | 0];
+    const rains = new Map(); // carte → { canvas, ctx, w, h, size, cols }
+    // Minuterie de 55 ms (~18 images/s, la pluie du film est saccadée) ; le navigateur la ralentit en arrière-plan.
+    let timer = 0, queued = false;
+
+    function setup(r, card) {
+      const dpr = window.devicePixelRatio || 1;
+      r.w = card.clientWidth;
+      r.h = card.clientHeight;
+      r.canvas.width = Math.round(r.w * dpr);
+      r.canvas.height = Math.round(r.h * dpr);
+      r.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      r.size = Math.max(8, Math.round(r.h / 5));
+      r.cols = Array.from({ length: Math.ceil(r.w / r.size) }, () => ({ y: -Math.random() * 12, every: 1 + ((Math.random() * 3) | 0), tick: 0 }));
+      r.ctx.fillStyle = '#000';
+      r.ctx.fillRect(0, 0, r.w, r.h);
+    }
+
+    function frame() {
+      timer = 0;
+      for (const [card, r] of rains) {
+        if (!card.isConnected) { rains.delete(card); continue; }
+        if (card.clientWidth !== r.w || card.clientHeight !== r.h) setup(r, card);
+        const { ctx, size } = r;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.16)';
+        ctx.fillRect(0, 0, r.w, r.h);
+        ctx.font = `${size}px 'Share Tech Mono', monospace`;
+        ctx.textBaseline = 'top';
+        r.cols.forEach((c, i) => {
+          if (++c.tick % c.every) return;
+          const x = i * size, y = c.y * size;
+          ctx.fillStyle = '#00ff41';
+          ctx.fillText(glyph(), x, y - size); // le caractère d'avant repasse en vert
+          ctx.fillStyle = '#e6ffe9';
+          ctx.fillText(glyph(), x, y); // tête de colonne, presque blanche
+          c.y += 1;
+          if (y > r.h && Math.random() > 0.85) c.y = -Math.random() * 6;
+        });
+      }
+      if (rains.size) timer = setTimeout(frame, 55);
+    }
+
+    // Cherche les cartes Matrix de la page (une fois par salve de changements) ; remet le canvas si la carte a été redessinée.
+    function scan() {
+      queued = false;
+      document.querySelectorAll('.num-card.skin-matrix').forEach(card => {
+        const known = rains.get(card);
+        if (known) {
+          if (known.canvas.parentNode !== card) card.prepend(known.canvas);
+          return;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.className = 'matrix-rain';
+        canvas.setAttribute('aria-hidden', 'true');
+        card.prepend(canvas);
+        const r = { canvas, ctx: canvas.getContext('2d') };
+        setup(r, card);
+        rains.set(card, r);
+      });
+      if (rains.size && !timer) timer = setTimeout(frame, 55);
+    }
+
+    function watch(root) {
+      if (reducedMotion) return;
+      new MutationObserver(() => {
+        if (!queued) { queued = true; setTimeout(scan, 0); }
+      }).observe(root, { childList: true, subtree: true });
+    }
+    return { glyph, watch };
+  })();
+  // Chiffre affiché pendant que ça tourne : du code qui défile pour le skin Matrix, un chiffre sinon.
+  const spinChar = card => (card && card.classList.contains('skin-matrix') ? MatrixRain.glyph() : String((Math.random() * 10) | 0));
   const titleHTML = id => {
     const a = id && Ach.byId.get(id);
     if (!a) return '';
@@ -1049,7 +1126,7 @@
     const show = (el, cls) => { el.classList.remove('invisible'); if (cls && !reducedMotion) el.classList.add(cls); };
 
     const spin = setInterval(() => {
-      for (let i = revealed; i < slotCount; i++) slots[i].textContent = String((Math.random() * 10) | 0);
+      for (let i = revealed; i < slotCount; i++) slots[i].textContent = spinChar(card);
     }, 55);
     requestAnimationFrame(() => vignette.classList.add('on'));
     // Menu verrouillé pendant la révélation : on ne peut pas aller voir le résultat ailleurs avant la fin.
@@ -2230,7 +2307,7 @@
     let revealed = 0;
     const timers = [];
     const spin = setInterval(() => {
-      slots.forEach(list => { for (let k = revealed; k < slotCount; k++) list[k].textContent = String((Math.random() * 10) | 0); });
+      slots.forEach((list, j) => { for (let k = revealed; k < slotCount; k++) list[k].textContent = spinChar(cards[j]); });
     }, 55);
     const at = (ms, fn) => timers.push(setTimeout(fn, Math.max(0, r.revealAt - Room.offset + ms - Date.now())));
     let clock = REVEAL.digitStart;
@@ -2467,6 +2544,7 @@
     }
   });
 
+  MatrixRain.watch(app);
   window.addEventListener('hashchange', route);
   applyTheme();
   syncPlayer();

@@ -979,16 +979,15 @@ body.locked .topbar a, body.locked .topbar button { pointer-events: none; opacit
 .skin-chrome .slot { background: linear-gradient(110deg, #6b7280 0%, #e5e7eb 20%, #fff 26%, #9ca3af 36%, #4b5563 50%, #d1d5db 70%, #6b7280 100%); background-size: 250% 100%;
   -webkit-background-clip: text; background-clip: text; color: transparent; animation: chrome-sheen 4s ease-in-out infinite; }
 @keyframes chrome-sheen { 0%, 100% { background-position: 0 0; } 50% { background-position: 100% 0; } }
-/* Matrix : chiffres verts lumineux, traînées de code qui tombent derrière, chiffres qui tombent pendant qu'ils tournent */
-.num-card.skin-matrix { background: #000; border-color: #166534; box-shadow: 0 0 14px rgba(34, 197, 94, .35); }
-.num-card.skin-matrix::before { content: ''; position: absolute; inset: 0; pointer-events: none; opacity: .55;
-  background-image: repeating-linear-gradient(90deg, transparent 0 6px, #000 6px 12px), repeating-linear-gradient(180deg, rgba(74, 222, 128, .45) 0 3px, transparent 3px 11px);
-  background-size: 100% 100%, 100% 22px; animation: matrix-rain 1.1s linear infinite; }
-@keyframes matrix-rain { to { background-position: 0 0, 0 22px; } }
-.skin-matrix .slot { position: relative; z-index: 1; color: #4ade80; text-shadow: 0 0 6px #22c55e, 0 0 14px #16a34a; }
-.skin-matrix .slot.spinning { color: #86efac; opacity: .8; animation: matrix-fall .22s linear infinite; }
-@keyframes matrix-fall { from { transform: translateY(-.35em); opacity: .2; } to { transform: translateY(.35em); opacity: .9; } }
+/* Matrix : pluie de code (canvas ajouté par le site), chiffres qui se décryptent en défilant puis se figent en vert */
+.num-card.skin-matrix { background: #000; border-color: #003b00; box-shadow: 0 0 16px rgba(0, 255, 65, .3), inset 0 0 18px rgba(0, 0, 0, .9); }
+.matrix-rain { position: absolute; inset: 0; width: 100%; height: 100%; opacity: .75; pointer-events: none; }
+.skin-matrix .slot { position: relative; z-index: 1; font-family: 'Share Tech Mono', monospace; font-weight: 400; color: #00ff41;
+  text-shadow: 0 0 2px #000, 0 0 8px #00ff41, 0 0 18px #008f11; background: radial-gradient(ellipse, rgba(0, 0, 0, .75) 30%, transparent 72%); }
+.skin-matrix .slot.spinning { color: #7dffa0; opacity: .9; }
+.skin-matrix .slot.revealed { animation: matrix-lock .7s ease-out; }
+@keyframes matrix-lock { 0% { color: #fff; text-shadow: 0 0 10px #fff, 0 0 24px #00ff41, 0 0 40px #00ff41; transform: scale(1.3); } 60% { color: #caffd5; } 100% { color: #00ff41; transform: none; } }
 .skin-slots .slot.collapsed, .skin-dice .slot.collapsed, .skin-pixel .slot.collapsed { width: 0; height: 0; margin: 0; box-shadow: none; background: none; }
-@media (prefers-reduced-motion: reduce) { .skin-fire .slot, .skin-rainbow .slot, .skin-chrome .slot, .skin-matrix .slot.spinning, .num-card.skin-matrix::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .skin-fire .slot, .skin-rainbow .slot, .skin-chrome .slot, .skin-matrix .slot.revealed { animation: none; } }
 @media (max-width: 560px) { .live-row { flex-wrap: wrap; } .skin-grid { grid-template-columns: 1fr 1fr; } .skin-tile .num-card.md { font-size: 1.15rem; } }
 .bot-name { font-weight: 700; color: var(--prose-2); }
