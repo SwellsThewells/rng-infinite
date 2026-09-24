@@ -4,7 +4,7 @@ A random number game with **no daily limit**, inspired by [rngdle.com](https://w
 Each roll gives a number between 0 and 1,000,000, scored by the original game's 233 badges (palindromes, primes, sequences, meme numbers…) that award XP,
 plus custom badges defined in `tools/source/custom.json` — currently **Drastix** 💥: the number contains "235", 25,000 XP.
 
-**[Play →](https://rng-infinite.com/)** (with the online leaderboard) · [GitHub Pages mirror](https://sacha9214.github.io/rng-infinite/)
+**[Play →](https://rng-infinite.com/)** (with the online leaderboard)
 
 ![Roll screen](docs/apercu.png)
 
