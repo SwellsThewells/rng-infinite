@@ -46,6 +46,7 @@ const backend = `
       const out = [];
       for (const [k, v] of memory.db) out.push([k, v instanceof Map ? 'm' : v instanceof Set ? 's' : 'v', v instanceof Map || v instanceof Set ? [...v] : v]);
       try { localStorage.setItem(STORE_KEY, JSON.stringify(out)); } catch (e) {}
+      if (window.RNG_ACCOUNT) window.RNG_ACCOUNT.changed();
     }, 300);
   };
 
@@ -154,6 +155,106 @@ ${modules}
 })();
 `;
 
+// ---- "Sign in with Claude" : le joueur (données du site + base locale) est sauvegardé dans la base de l'artifact,
+// dans le sous-arbre privé du compte claude.ai (data/users/<id>/), et rechargé sur n'importe quel appareil.
+const account = `
+(function () {
+  'use strict';
+  const KEYS = ['rnginf.v1', 'rnginf.server.v1']; // données du site (js/store.js) et base du serveur local
+  const FLAG = 'rnginf.cloud.v1';                  // { savedAt } tant que ce navigateur est connecté
+  const PART = 60000;                              // caractères par document (256 Kio max, même en UTF-8)
+  const DELAY = 4000;                              // regroupe les modifications avant d'envoyer
+  const get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
+  const put = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} };
+  const flag = () => { try { return JSON.parse(get(FLAG)); } catch (e) { return null; } };
+
+  let conn = null, name = '', timer = null, saving = null, dirty = false;
+
+  function connect() {
+    if (!conn) {
+      conn = (async () => {
+        const claude = window.claude;
+        const [user, db] = claude && claude.use ? await Promise.all([claude.use('user'), claude.use('db')]) : [null, null];
+        const uid = user && await user.id();
+        if (!db || !uid) throw new Error('Sign-in with Claude is not available on this page');
+        name = await user.name();
+        const base = 'data/users/' + uid;
+        return { db, head: db.doc(base + '/save'), part: i => db.doc(base + '/part-' + i) };
+      })();
+      conn.catch(() => { conn = null; });
+    }
+    return conn;
+  }
+
+  async function readCloud(c) {
+    const head = await c.head.get();
+    if (!head.exists) return null;
+    const { savedAt, parts } = head.data();
+    const docs = await Promise.all(Array.from({ length: parts }, (_, i) => c.part(i).get()));
+    if (docs.some(d => !d.exists)) throw new Error('Your saved player is incomplete, try again');
+    return { savedAt, data: JSON.parse(docs.map(d => d.data().s).join('')) };
+  }
+
+  async function writeCloud() {
+    const c = await connect();
+    dirty = false;
+    const savedAt = Date.now();
+    const text = JSON.stringify(Object.fromEntries(KEYS.map(k => [k, get(k)])));
+    const parts = Math.max(1, Math.ceil(text.length / PART));
+    for (let i = 0; i < parts; i++) await c.part(i).set({ s: text.slice(i * PART, (i + 1) * PART) });
+    await c.head.set({ savedAt, parts });
+    if (flag()) put(FLAG, JSON.stringify({ savedAt }));
+  }
+
+  function save() {
+    if (saving) { dirty = true; return saving; }
+    saving = writeCloud()
+      .catch(err => { dirty = true; console.warn('cloud save', err); })
+      .finally(() => { saving = null; if (dirty && flag()) schedule(); });
+    return saving;
+  }
+  function schedule() { clearTimeout(timer); timer = setTimeout(save, DELAY); }
+
+  function load(cloud) {
+    KEYS.forEach(k => put(k, cloud.data[k] ?? null));
+    put(FLAG, JSON.stringify({ savedAt: cloud.savedAt }));
+    location.reload();
+  }
+
+  window.RNG_ACCOUNT = {
+    label: 'Claude',
+    signedIn: () => !!flag(),
+    who: () => name,
+    changed() { if (flag()) { dirty = true; schedule(); } },
+    async signIn() {
+      const c = await connect();
+      const cloud = await readCloud(c);
+      if (cloud) { load(cloud); return new Promise(() => {}); } // la page se recharge avec le joueur sauvegardé
+      put(FLAG, JSON.stringify({ savedAt: 0 }));
+      await save();
+      return 'Signed in: your progress now saves to your Claude account';
+    },
+    async signOut() {
+      clearTimeout(timer);
+      await save();
+      if (dirty) throw new Error('Could not save to your account, try signing out again');
+      KEYS.concat(FLAG).forEach(k => put(k, null));
+      location.reload();
+      return new Promise(() => {});
+    },
+  };
+
+  // Connecté : si le compte a été sauvegardé depuis un autre appareil, on le recharge ici.
+  if (flag()) {
+    connect().then(readCloud).then(cloud => {
+      if (cloud && cloud.savedAt > (flag() || {}).savedAt) load(cloud);
+    }).catch(err => console.warn('cloud load', err));
+  }
+  document.addEventListener('visibilitychange', () => { if (document.hidden && dirty && flag()) save(); });
+  window.addEventListener('load', () => { if (window.Store) window.Store.onChange(() => window.RNG_ACCOUNT.changed()); });
+})();
+`;
+
 // ---- la page
 const emotes = Object.fromEntries(fs.readdirSync(path.join(ROOT, 'img/emotes')).filter(f => f.endsWith('.png'))
   .map(f => [f.slice(0, -4), `data:image/png;base64,${fs.readFileSync(path.join(ROOT, 'img/emotes', f)).toString('base64')}`]));
@@ -171,7 +272,7 @@ const inlineScript = rel => {
   let out = `<script>\n${safe(js)}\n</script>`;
   // Pas de connexion Google ici : le script de Google est bloqué et le compte vit dans ce navigateur.
   if (rel === 'js/config.js') out += `\n<script>window.RNG_CONFIG.googleClientId = '';</script>`;
-  if (rel === 'js/app.js') out = `<script>window.RNG_EMOTES = ${JSON.stringify(emotes)};</script>\n<script>\n${safe(backend)}\n</script>\n` + out;
+  if (rel === 'js/app.js') out = `<script>window.RNG_EMOTES = ${JSON.stringify(emotes)};</script>\n<script>\n${safe(backend)}\n</script>\n<script>\n${safe(account)}\n</script>\n` + out;
   return out;
 };
 
