@@ -10,7 +10,7 @@
     // Créé le 2026-09-21 dans le projet Google Cloud « rng-infinite » (Google Auth Platform > Clients).
     googleClientId: env.GOOGLE_CLIENT_ID || '646300525529-ab8l5rqhnurlj8q7tv6bhf0c98nronn6.apps.googleusercontent.com',
     // Déploiement Vercel qui héberge l'API (utilisé quand le site est servi depuis GitHub Pages).
-    apiBase: 'https://rng-infinite.vercel.app',
+    apiBase: 'https://rng-infinite.com',
   };
 
   if (typeof module === 'object' && module.exports) module.exports = config;
