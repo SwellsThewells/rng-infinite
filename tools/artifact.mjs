@@ -174,7 +174,8 @@ ${modules}
   window.fetch = (input, options = {}) => {
     const url = typeof input === 'string' ? input : input.url;
     const match = /^\\/api\\/([a-z]+)/.exec(url);
-    if (!match) return realFetch(input, options);
+    // Seules les fonctions du jeu tournent ici ; /api/save (comptes Google) part vers le vrai serveur.
+    if (!match || !API_NAMES.includes(match[1])) return realFetch(input, options);
     const name = match[1];
     return new Promise(done => {
       const headers = {};
@@ -199,101 +200,179 @@ ${modules}
 })();
 `;
 
-// ---- "Sign in with Claude" : le joueur (données du site + base locale) est sauvegardé dans la base de l'artifact,
-// dans le sous-arbre privé du compte claude.ai (data/users/<id>/), et rechargé sur n'importe quel appareil.
+// ---- Comptes : le joueur (données du site + base du serveur local) est sauvegardé en ligne et rechargé ailleurs.
+//   - dans un artifact claude.ai : "Sign in with Claude", base privée de l'artifact (data/users/<id>/) ;
+//   - sur le web (standalone/, Vercel) : "Sign in with Google", via /api/save (si le déploiement l'a configuré).
+// Et partout, un code de sauvegarde à copier d'un côté et coller de l'autre (de l'artifact vers le site, par ex.).
 const account = `
 (function () {
   'use strict';
-  // Hors d'un artifact claude.ai (page servie seule), pas de compte : tout reste dans ce navigateur.
-  if (!window.claude || !window.claude.use) return;
   const KEYS = ['rnginf.v1', 'rnginf.server.v1']; // données du site (js/store.js) et base du serveur local
-  const FLAG = 'rnginf.cloud.v1';                  // { savedAt } tant que ce navigateur est connecté
-  const PART = 60000;                              // caractères par document (256 Kio max, même en UTF-8)
+  const FLAG = 'rnginf.cloud.v1';                  // { savedAt, pending? } tant que ce navigateur est connecté
   const DELAY = 4000;                              // regroupe les modifications avant d'envoyer
   const get = k => { try { return localStorage.getItem(k); } catch (e) { return null; } };
   const put = (k, v) => { try { v === null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch (e) {} };
   const flag = () => { try { return JSON.parse(get(FLAG)); } catch (e) { return null; } };
+  const snapshot = () => JSON.stringify(Object.fromEntries(KEYS.map(k => [k, get(k)])));
 
-  let conn = null, name = '', timer = null, saving = null, dirty = false;
+  // ---- code de sauvegarde : "RNG1." + JSON compressé (gzip) en base64url
+  const b64 = bytes => { let s = ''; for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000)); return btoa(s).replace(/\\+/g, '-').replace(/\\//g, '_').replace(/=+$/, ''); };
+  const unb64 = s => Uint8Array.from(atob(s.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0));
+  const pipe = async (bytes, stream) => new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(stream)).arrayBuffer());
+  async function encode(text) { return 'RNG1.' + b64(await pipe(new TextEncoder().encode(text), new CompressionStream('gzip'))); }
+  async function decode(code) {
+    const m = /^RNG1\\.([A-Za-z0-9_-]+)$/.exec(String(code).replace(/\\s+/g, ''));
+    if (!m) throw new Error('That is not a save code');
+    let data;
+    try { data = JSON.parse(new TextDecoder().decode(await pipe(unb64(m[1]), new DecompressionStream('gzip')))); } catch (e) { throw new Error('That save code is damaged: copy it again'); }
+    if (!data || typeof data[KEYS[0]] !== 'string') throw new Error('That save code has no player in it');
+    return data;
+  }
 
-  function connect() {
-    if (!conn) {
-      conn = (async () => {
-        const claude = window.claude;
-        const [user, db] = claude && claude.use ? await Promise.all([claude.use('user'), claude.use('db')]) : [null, null];
-        const uid = user && await user.id();
-        if (!db || !uid) throw new Error('Sign-in with Claude is not available on this page');
-        name = await user.name();
-        const base = 'data/users/' + uid;
-        return { db, head: db.doc(base + '/save'), part: i => db.doc(base + '/part-' + i) };
-      })();
-      conn.catch(() => { conn = null; });
+  // ---- fournisseurs : read() → { savedAt, text } | null ; write(text) → savedAt
+  function claudeBackend() {
+    const PART = 60000; // caractères par document (256 Kio max, même en UTF-8)
+    let conn = null, name = '';
+    const connect = () => conn || (conn = (async () => {
+      const [user, db] = await Promise.all([window.claude.use('user'), window.claude.use('db')]);
+      const uid = user && await user.id();
+      if (!db || !uid) throw new Error('Sign-in with Claude is not available on this page');
+      name = await user.name();
+      const base = 'data/users/' + uid;
+      return { head: db.doc(base + '/save'), part: i => db.doc(base + '/part-' + i) };
+    })().catch(err => { conn = null; throw err; }));
+    return {
+      label: 'Claude', who: () => name, connect,
+      async read() {
+        const c = await connect();
+        const head = await c.head.get();
+        if (!head.exists) return null;
+        const { savedAt, parts } = head.data();
+        const docs = await Promise.all(Array.from({ length: parts }, (_, i) => c.part(i).get()));
+        if (docs.some(d => !d.exists)) throw new Error('Your saved player is incomplete, try again');
+        return { savedAt, text: docs.map(d => d.data().s).join('') };
+      },
+      async write(text) {
+        const c = await connect();
+        const savedAt = Date.now();
+        const parts = Math.max(1, Math.ceil(text.length / PART));
+        for (let i = 0; i < parts; i++) await c.part(i).set({ s: text.slice(i * PART, (i + 1) * PART) });
+        await c.head.set({ savedAt, parts });
+        return savedAt;
+      },
+      forget() {},
+    };
+  }
+
+  function googleBackend() {
+    const AUTH = 'rnginf.google.v1'; // { account, secret, name } de cet appareil
+    const auth = () => { try { return JSON.parse(get(AUTH)); } catch (e) { return null; } };
+    let config = null, gis = null;
+    async function post(body) {
+      const res = await fetch('/api/save', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const out = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(out.error || 'Your account is unavailable right now, try again'), { status: res.status });
+      return out;
     }
-    return conn;
+    const clientId = () => config || (config = fetch('/api/save').then(r => (r.ok ? r.json() : {})).then(c => c.googleClientId || '').catch(() => ''));
+    const loadGis = () => gis || (gis = new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://accounts.google.com/gsi/client';
+      s.async = true;
+      s.onload = () => resolve(window.google.accounts.id);
+      s.onerror = () => { gis = null; reject(new Error('Google sign-in could not load')); };
+      document.head.appendChild(s);
+    }));
+    const creds = () => { const a = auth(); if (!a) throw new Error('Signed out: sign in with Google again'); return a; };
+    return {
+      label: 'Google', who: () => (auth() || {}).name || '',
+      connect: async () => creds(),
+      async read() { const { save } = await post({ action: 'load', ...creds() }); return save && { savedAt: save.savedAt, text: JSON.stringify(await decode(save.code)) }; },
+      async write(text) { return (await post({ action: 'store', ...creds(), code: await encode(text) })).savedAt; },
+      forget() { put(AUTH, null); if (window.google && google.accounts) google.accounts.id.disableAutoSelect(); },
+      // Le bouton officiel de Google ; la connexion se termine quand Google renvoie le jeton.
+      async renderButton(slot, finish) {
+        const id = await clientId();
+        if (!id) { slot.innerHTML = '<span class="panel-note">Google sign-in is not set up on this site yet.</span>'; return; }
+        try {
+          const g = await loadGis();
+          g.initialize({ client_id: id, auto_select: false, callback: r => finish(async () => {
+            const out = await post({ action: 'signin', credential: r.credential });
+            let name = '';
+            try { name = JSON.parse(atob(r.credential.split('.')[1].replace(/-/g, '+').replace(/_/g, '/'))).given_name || ''; } catch (e) {}
+            put(AUTH, JSON.stringify({ account: out.account, secret: out.secret, name }));
+            return out.save ? { savedAt: out.save.savedAt, text: JSON.stringify(await decode(out.save.code)) } : null;
+          }) });
+          if (!slot.isConnected) return;
+          const dark = document.documentElement.classList.contains('dark');
+          g.renderButton(slot, { theme: dark ? 'filled_black' : 'outline', size: 'large', shape: 'pill', text: 'signin_with', width: 260 });
+        } catch (err) {
+          slot.innerHTML = '<span class="panel-note">Google sign-in is unavailable right now.</span>';
+        }
+      },
+    };
   }
 
-  async function readCloud(c) {
-    const head = await c.head.get();
-    if (!head.exists) return null;
-    const { savedAt, parts } = head.data();
-    const docs = await Promise.all(Array.from({ length: parts }, (_, i) => c.part(i).get()));
-    if (docs.some(d => !d.exists)) throw new Error('Your saved player is incomplete, try again');
-    return { savedAt, data: JSON.parse(docs.map(d => d.data().s).join('')) };
-  }
+  const inArtifact = !!(window.claude && window.claude.use);
+  const backend = inArtifact ? claudeBackend() : googleBackend();
 
-  async function writeCloud() {
-    const c = await connect();
-    dirty = false;
-    const savedAt = Date.now();
-    const text = JSON.stringify(Object.fromEntries(KEYS.map(k => [k, get(k)])));
-    const parts = Math.max(1, Math.ceil(text.length / PART));
-    for (let i = 0; i < parts; i++) await c.part(i).set({ s: text.slice(i * PART, (i + 1) * PART) });
-    await c.head.set({ savedAt, parts });
-    if (flag()) put(FLAG, JSON.stringify({ savedAt }));
-  }
-
+  // ---- synchronisation commune
+  let timer = null, saving = null, dirty = false;
   function save() {
     if (saving) { dirty = true; return saving; }
-    saving = writeCloud()
+    dirty = false;
+    saving = backend.write(snapshot())
+      .then(savedAt => { if (flag()) put(FLAG, JSON.stringify({ savedAt })); })
       .catch(err => { dirty = true; console.warn('cloud save', err); })
       .finally(() => { saving = null; if (dirty && flag()) schedule(); });
     return saving;
   }
   function schedule() { clearTimeout(timer); timer = setTimeout(save, DELAY); }
-
-  function load(cloud) {
-    KEYS.forEach(k => put(k, cloud.data[k] ?? null));
-    put(FLAG, JSON.stringify({ savedAt: cloud.savedAt }));
+  function apply(data, savedAt, pending) {
+    KEYS.forEach(k => put(k, data[k] ?? null));
+    if (flag() || savedAt) put(FLAG, JSON.stringify({ savedAt: savedAt || 0, pending: !!pending }));
     location.reload();
+    return new Promise(() => {}); // la page se recharge
+  }
+  // Après la connexion : le joueur du compte s'il existe, sinon celui de cet appareil part sur le compte.
+  async function adopt(cloud) {
+    if (cloud) return apply(JSON.parse(cloud.text), cloud.savedAt);
+    put(FLAG, JSON.stringify({ savedAt: 0 }));
+    await save();
+    return 'Signed in: your progress now saves to your ' + backend.label + ' account';
   }
 
   window.RNG_ACCOUNT = {
-    label: 'Claude',
+    label: backend.label,
     signedIn: () => !!flag(),
-    who: () => name,
+    who: () => backend.who(),
     changed() { if (flag()) { dirty = true; schedule(); } },
-    async signIn() {
-      const c = await connect();
-      const cloud = await readCloud(c);
-      if (cloud) { load(cloud); return new Promise(() => {}); } // la page se recharge avec le joueur sauvegardé
-      put(FLAG, JSON.stringify({ savedAt: 0 }));
-      await save();
-      return 'Signed in: your progress now saves to your Claude account';
-    },
+    async signIn() { await backend.connect(); return adopt(await backend.read()); },
+    renderButton: backend.renderButton && ((slot, finish) => backend.renderButton(slot, action => finish(async () => adopt(await action())))),
     async signOut() {
       clearTimeout(timer);
       await save();
       if (dirty) throw new Error('Could not save to your account, try signing out again');
+      backend.forget();
       KEYS.concat(FLAG).forEach(k => put(k, null));
       location.reload();
       return new Promise(() => {});
     },
+    // Code de sauvegarde : tout le joueur, pour le reprendre ailleurs.
+    exportCode: () => encode(snapshot()),
+    async importCode(code) {
+      const data = await decode(code);
+      // Connecté : le joueur importé remplace aussi celui du compte (envoyé après le rechargement).
+      return apply(data, flag() ? Date.now() : 0, !!flag());
+    },
   };
 
-  // Connecté : si le compte a été sauvegardé depuis un autre appareil, on le recharge ici.
-  if (flag()) {
-    connect().then(readCloud).then(cloud => {
-      if (cloud && cloud.savedAt > (flag() || {}).savedAt) load(cloud);
+  // Connecté : recharge le joueur s'il a été sauvegardé ailleurs depuis, ou envoie celui d'ici s'il attend.
+  const f = flag();
+  if (f) {
+    if (f.pending) { put(FLAG, JSON.stringify({ savedAt: f.savedAt })); save(); }
+    else backend.read().then(cloud => {
+      if (cloud && cloud.savedAt > (flag() || {}).savedAt) apply(JSON.parse(cloud.text), cloud.savedAt);
     }).catch(err => console.warn('cloud load', err));
   }
   document.addEventListener('visibilitychange', () => { if (document.hidden && dirty && flag()) save(); });
