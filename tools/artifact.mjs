@@ -7,6 +7,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import * as Extras from './artifact-extras.mjs';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const args = process.argv.slice(2);
@@ -14,6 +15,29 @@ const args = process.argv.slice(2);
 const PAGE = args.includes('--page');
 const OUT = path.resolve(args.find(a => !a.startsWith('--')) || path.join(ROOT, PAGE ? 'standalone/index.html' : 'dist/rng-infinite.html'));
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
+
+// Rareté Cosmic et badges en plus (tools/artifact-extras.mjs) : dans l'artifact seulement, pas dans --page.
+const EXTRAS = !PAGE;
+const PATCHES = {
+  'js/engine.js': Extras.patchEngine,
+  'js/app.js': Extras.patchApp,
+  'js/shop.js': Extras.patchShop,
+  'js/achievements.js': Extras.patchAchievements,
+  'api/_lib.js': Extras.patchServerLib,
+};
+let data = null;
+if (EXTRAS) {
+  const t0 = Date.now();
+  data = Extras.buildData(Extras.patchEngine(read('js/engine.js')), JSON.parse(read('data/badge-meta.json')));
+  console.log(`Badges en plus : ${data.extra.map(b => `${b.id} ${b.score}`).join(', ')}`);
+  console.log(`Cotes par rareté : ${Object.entries(data.tierOdds).map(([t, p]) => `${t} ${(p * 100).toFixed(3)}%`).join(', ')} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
+}
+// Un fichier du site tel que la version autonome le reçoit.
+const source = rel => {
+  if (EXTRAS && rel === 'js/badge-meta.js') return data.badgeMetaJS;
+  if (EXTRAS && rel === 'js/percentiles.js') return data.percentilesJS;
+  return EXTRAS && PATCHES[rel] ? PATCHES[rel](read(rel)) : read(rel);
+};
 // Un "</script>" dans du JS inliné fermerait la balise : "<\/script>" est équivalent en JS.
 const safe = js => js.replace(/<\/script/gi, '<\\/script');
 
@@ -28,7 +52,7 @@ const GLOBALS = {
 };
 const API_NAMES = ['roll', 'leaderboard', 'auth', 'history', 'name', 'profile', 'room', 'title', 'shop'];
 const modules = ['api/_lib.js', ...API_NAMES.map(n => `api/${n}.js`)]
-  .map(rel => `${JSON.stringify(rel)}: function (module, exports, require) {\n${read(rel)}\n}`)
+  .map(rel => `${JSON.stringify(rel)}: function (module, exports, require) {\n${source(rel)}\n}`)
   .join(',\n');
 
 const backend = `
@@ -278,7 +302,7 @@ const account = `
 const levels = `
 (function () {
   'use strict';
-  const MULT = { trash: 1, common: 1, uncommon: 2, rare: 3, epic: 4, anomaly: 5, mythic: 5 };
+  const MULT = { trash: 1, common: 1, uncommon: 2, rare: 3, epic: 4, anomaly: 5, mythic: 5${EXTRAS ? ', cosmic: 5' : ''} };
   const need = level => 10 + 5 * (level - 1); // points pour passer du niveau "level" au suivant
   const engine = RNGEngine.createEngine(window.BADGE_META, window.SCORE_PERCENTILES);
   const tierOf = r => engine.cardTier(r[1]);
@@ -400,7 +424,7 @@ const levelsCSS = `
 .lv-pop b { font-size: .9rem; font-weight: 800; color: var(--tier-common); }
 .lv-pop span { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--prose-2); }
 .lv-pop strong { font-size: .95rem; font-weight: 900; letter-spacing: .04em; color: var(--chart-accent); }
-${['trash','common','uncommon','rare','epic','anomaly','mythic'].map(t => `.lv-pop[data-tier="${t}"] b { color: var(--tier-${t}); }`).join('\n')}
+${['trash','common','uncommon','rare','epic','anomaly','mythic'].concat(EXTRAS ? ['cosmic'] : []).map(t => `.lv-pop[data-tier="${t}"] b { color: var(--tier-${t}); }`).join('\n')}
 .lv-pop.up { border-color: var(--chart-accent); }
 .lv-pop.show { animation: lv-in .35s cubic-bezier(.34,1.56,.64,1) both; }
 @keyframes lv-in { from { opacity: 0; transform: translateY(-8px) scale(.95); } }
@@ -418,7 +442,7 @@ const scripts = [...html.matchAll(/<script src="(js\/[\w-]+\.js)(?:\?v=\w+)?"><\
 if (!scripts.includes('js/app.js')) throw new Error('index.html : scripts introuvables');
 
 const inlineScript = rel => {
-  let js = read(rel);
+  let js = source(rel);
   if (rel === 'js/app.js') {
     js = js.split('img/emotes/${id}.png').join('${window.RNG_EMOTES[id]}');
     if (js.includes('img/emotes/')) throw new Error('app.js : chemin d\'émoticône non remplacé');
@@ -442,7 +466,7 @@ html = html
   .replace(/<link rel="canonical"[^>]*>\s*/i, '')
   // Redirection vers rng-infinite.com : sans objet ici.
   .replace(/<script>\s*\/\/ Adresse officielle[\s\S]*?<\/script>\s*/, '')
-  .replace(/<link rel="stylesheet" href="css\/style\.css[^"]*">/, () => `<style>\n${read('css/style.css')}\n${levelsCSS}\n</style>`)
+  .replace(/<link rel="stylesheet" href="css\/style\.css[^"]*">/, () => `<style>\n${read('css/style.css')}\n${levelsCSS}\n${EXTRAS ? Extras.CSS : ''}\n</style>`)
   .replace(/<script src="(js\/[\w-]+\.js)(?:\?v=\w+)?"><\/script>/g, (_, rel) => inlineScript(rel));
 
 // <title> en tête : seuls les premiers Ko sont lus pour nommer la page.

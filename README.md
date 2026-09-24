@@ -49,6 +49,8 @@ Build a single self-contained HTML file (site + `/api` running in the browser, s
 node tools/artifact.mjs            # → dist/rng-infinite.html
 ```
 
+The artifact build also adds a top rarity, **Cosmic** (best 0.1% of rolls), and 15 extra badges, defined in `tools/artifact-extras.mjs`; each badge's XP is derived from its real frequency, and the percentile table is recomputed at build time (about 2–3 minutes). rng-infinite.com and the standalone page do not get them.
+
 The same build as a complete web page lives in `standalone/` and is served at **rngdle-infinite.vercel.app** (a separate Vercel project with Root Directory `standalone`, no build step). Rebuild it after changing the game:
 
 ```bash
