@@ -51,10 +51,10 @@ node tools/artifact.mjs            # → dist/rng-infinite.html
 
 The artifact build also changes the game: rolls go from 0 to 9,999,999 (7 digits), three rarities sit above Mythic (**Cosmic** top 0.1%, **Celestial** top 0.01%, **Infinity** top 0.001%), and 62 extra badges are added, all defined in `tools/artifact-extras.mjs`. Every badge's XP is recomputed from its real frequency over the 10,000,000 numbers (the first build takes about 30 minutes on 4 cores; the result is cached in `tools/.cache/`). rng-infinite.com and the standalone page do not get these changes.
 
-The same build as a complete web page lives in `standalone/` and is served at **rngdle-infinite.vercel.app** (a separate Vercel project with Root Directory `standalone`, no build step). Rebuild it after changing the game:
+The same build as a complete web page, with the 7-digit rolls, new rarities and badges, lives in `standalone/`. `vercel.json` serves it at the root of this repo's Vercel deployment (rngfrvr.vercel.app), with no build step and no database. Rebuild it after changing the game:
 
 ```bash
-node tools/artifact.mjs --page     # → standalone/index.html
+node tools/artifact.mjs --page --extras   # → standalone/index.html
 ```
 
 Regenerate the data after changing the engine:

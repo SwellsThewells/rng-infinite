@@ -1,6 +1,7 @@
 // Version autonome du jeu en une seule page HTML : le site + les fonctions /api qui tournent dans le navigateur.
 //   node tools/artifact.mjs [sortie.html]   (par défaut : dist/rng-infinite.html) : pour un artifact claude.ai
-//   node tools/artifact.mjs --page          → standalone/index.html, page web complète (rngdle-infinite.vercel.app)
+//   node tools/artifact.mjs --page          → standalone/index.html, page web complète
+//   node tools/artifact.mjs --page --extras → la même, avec les 7 chiffres, les raretés et les badges en plus
 // Tout est inliné (CSS, JS, émoticônes en data:). Les appels /api/* sont interceptés et servis par les vraies
 // fonctions de api/, branchées sur le faux Redis de tools/fake-redis.mjs, sauvegardé dans le localStorage.
 // Tirages, pièces, boutique, succès et duels contre les bots marchent ; le classement ne contient que ce navigateur.
@@ -17,8 +18,9 @@ const OUT = path.resolve(args.find(a => !a.startsWith('--')) || path.join(ROOT, 
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
 // Tirages à 7 chiffres, raretés Cosmic/Celestial/Infinity et badges en plus (tools/artifact-extras.mjs) :
-// dans l'artifact seulement, pas dans --page.
-const EXTRAS = !PAGE;
+// dans l'artifact, et dans --page seulement avec --extras.
+// --extras : les met aussi dans la page web (standalone/, servie sur Vercel).
+const EXTRAS = !PAGE || args.includes('--extras');
 const PATCHES = {
   'js/engine.js': Extras.patchEngine,
   'js/app.js': Extras.patchApp,
@@ -431,7 +433,7 @@ ${['trash','common','uncommon','rare','epic','anomaly','mythic'].concat(EXTRAS ?
 .lv-pop.show { animation: lv-in .35s cubic-bezier(.34,1.56,.64,1) both; }
 @keyframes lv-in { from { opacity: 0; transform: translateY(-8px) scale(.95); } }
 .lv-pop[hidden], .lv-panel[hidden] { display: none; }
-@media (max-width: 480px) { .lv-bar { display: none !important; } .lv-chip { margin-right: .15rem; } .player-btn { padding: 0 .5rem; } .player-btn span { max-width: 4.5rem; } }
+@media (max-width: 480px) { .lv-bar { display: none !important; } .lv-chip { margin-right: .15rem; } .player-btn { padding: 0 .5rem; } .player-btn span { display: none; } }
 @media (max-width: 720px) { .lv-bar { width: 2.4rem; } .lv-chip { padding: 0 .45rem; margin-right: .25rem; } }
 @media (prefers-reduced-motion: reduce) { .lv-chip.bump, .lv-pop.show { animation: none; } .lv-bar i { transition: none; } }
 `;
