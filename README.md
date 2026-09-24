@@ -43,6 +43,12 @@ Static site, no dependencies:
 python3 -m http.server 8123
 ```
 
+Build a single self-contained HTML file (site + `/api` running in the browser, saved to localStorage; duels against bots only):
+
+```bash
+node tools/artifact.mjs            # → dist/rng-infinite.html
+```
+
 Regenerate the data after changing the engine:
 
 ```bash
