@@ -867,7 +867,7 @@
         <p class="field-error" id="name-error"${error ? '' : ' hidden'}>${esc(error)}</p>
         <div class="actions"><button class="btn-roll small" type="submit">Save & roll</button></div>
       </form>
-      ${External && !External.signedIn() ? `<div class="or-google"><span class="panel-note">or sign in to keep your player on every device</span><button class="btn" id="ext-in">Sign in with ${esc(External.label)}</button></div>` : ''}
+      ${External && !External.signedIn() ? `<div class="or-google"><span class="panel-note">or sign in to keep your player on every device</span>${extSignInHTML()}</div>` : ''}
       ${offerGoogle ? '<div class="or-google"><span class="panel-note">or sign in to keep your player on every device</span><div id="google-btn" class="google-btn"></div></div>' : ''}`, m => {
       const input = m.querySelector('#name-input');
       const errorEl = m.querySelector('#name-error');
@@ -904,23 +904,66 @@
   // { label, signedIn(), who(), signIn(), signOut() } : signIn/signOut rechargent la page quand le joueur change.
   const External = window.RNG_ACCOUNT || null;
 
+  // Bouton de connexion : celui du fournisseur s'il en a un (Google), sinon un bouton simple (Claude).
+  const extSignInHTML = () => (External.renderButton
+    ? '<div id="ext-slot" class="google-btn"></div>'
+    : `<button class="btn" id="ext-in">Sign in with ${esc(External.label)}</button>`);
+
   function bindExternal(m) {
     if (!External) return;
-    const run = async (btn, action) => {
-      btn.disabled = true;
+    const finish = async (action, btn) => {
+      if (btn) btn.disabled = true;
       try {
         const message = await action();
         if (message) toast(message);
         closeModal();
         route();
       } catch (err) {
-        btn.disabled = false;
+        if (btn) btn.disabled = false;
         toast(err.message || 'Sign-in failed, try again');
       }
     };
-    const signIn = m.querySelector('#ext-in'), signOut = m.querySelector('#ext-out');
-    if (signIn) signIn.addEventListener('click', () => run(signIn, () => External.signIn()));
-    if (signOut) signOut.addEventListener('click', () => run(signOut, () => External.signOut()));
+    const signIn = m.querySelector('#ext-in'), signOut = m.querySelector('#ext-out'), slot = m.querySelector('#ext-slot');
+    if (signIn) signIn.addEventListener('click', () => finish(() => External.signIn(), signIn));
+    if (signOut) signOut.addEventListener('click', () => finish(() => External.signOut(), signOut));
+    if (slot) External.renderButton(slot, action => finish(action));
+
+    // Code de sauvegarde : copier ici, coller sur un autre appareil ou l'autre version du jeu.
+    const copy = m.querySelector('#save-copy'), load = m.querySelector('#save-load'), box = m.querySelector('#save-code');
+    if (copy) copy.addEventListener('click', async () => {
+      copy.disabled = true;
+      try {
+        const code = await External.exportCode();
+        box.value = code;
+        try {
+          await navigator.clipboard.writeText(code);
+          toast('Save code copied: paste it on the other device');
+        } catch (e) {
+          box.select();
+          toast('Save code ready in the box: select it and copy it');
+        }
+      } catch (err) {
+        toast('Could not make a save code, try again');
+      }
+      copy.disabled = false;
+    });
+    if (load) load.addEventListener('click', async () => {
+      if (!box.value.trim()) { toast('Paste a save code in the box first'); box.focus(); return; }
+      // Deux clics : charger remplace le joueur de cet appareil.
+      if (!load.dataset.armed) {
+        load.dataset.armed = '1';
+        load.textContent = 'Replace my player';
+        toast('Loading replaces the player on this device. Click again to confirm.');
+        return;
+      }
+      load.disabled = true;
+      try {
+        await External.importCode(box.value);
+      } catch (err) {
+        load.disabled = false;
+        toast(err.message || 'Could not load that save code');
+      }
+    });
   }
   let googleReady = null;
   let afterGoogle = null; // action à reprendre après la connexion (ex. le tirage qui attendait un nom)
@@ -1026,13 +1069,17 @@
 
   function googleAccountHTML() {
     if (External) {
-      return External.signedIn()
+      return (External.signedIn()
         ? `<div class="field"><label>Account</label>
             <div class="google-row"><span>Signed in with ${esc(External.label)}${External.who() ? ` as <b>${esc(External.who())}</b>` : ''}</span><button class="btn" id="ext-out">Sign out</button></div>
             <span class="panel-note">Your player, coins, skins and whole roll history are saved to your account and load on any device.</span></div>`
         : `<div class="field"><label>Account</label>
-            <div><button class="btn" id="ext-in">Sign in with ${esc(External.label)}</button></div>
-            <span class="panel-note">Sign in to save your player, coins, skins and whole roll history to your account and pick up on any device.</span></div>`;
+            <div>${extSignInHTML()}</div>
+            <span class="panel-note">Sign in to save your player, coins, skins and whole roll history to your account and pick up on any device.</span></div>`
+        ) + (External.exportCode ? `<div class="field"><label for="save-code">Save code</label>
+            <div class="google-row"><button class="btn" id="save-copy">Copy save code</button></div>
+            <div class="google-row"><input class="input" id="save-code" placeholder="Paste a save code" autocomplete="off" spellcheck="false" style="flex:1;min-width:0"><button class="btn" id="save-load">Load</button></div>
+            <span class="panel-note">Moves your whole player between devices, or between the Claude artifact and the website: copy the code on one, paste it on the other.</span></div>` : '');
     }
     if (!googleEnabled()) return '';
     const g = Store.player.google;

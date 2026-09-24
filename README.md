@@ -57,6 +57,8 @@ The same build as a complete web page, with the 7-digit rolls, new rarities and 
 node tools/artifact.mjs --page --extras   # → standalone/index.html
 ```
 
+**Accounts on the website.** Players can move their progress in with a *save code* (player menu → Copy save code in the Claude artifact, paste it on the site) and sign in with Google to sync across devices. Google sign-in goes through `api/save.js` and needs two settings on the Vercel project: an Upstash Redis database connected to it (`KV_REST_API_URL` / `KV_REST_API_TOKEN`), and `GOOGLE_CLIENT_ID`, a Google OAuth *Web* client whose authorized JavaScript origins include the site's address. Without them the site still plays; the sign-in box says Google sign-in is not set up.
+
 Regenerate the data after changing the engine:
 
 ```bash
