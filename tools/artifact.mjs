@@ -16,20 +16,22 @@ const PAGE = args.includes('--page');
 const OUT = path.resolve(args.find(a => !a.startsWith('--')) || path.join(ROOT, PAGE ? 'standalone/index.html' : 'dist/rng-infinite.html'));
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 
-// Rareté Cosmic et badges en plus (tools/artifact-extras.mjs) : dans l'artifact seulement, pas dans --page.
+// Tirages à 7 chiffres, raretés Cosmic/Celestial/Infinity et badges en plus (tools/artifact-extras.mjs) :
+// dans l'artifact seulement, pas dans --page.
 const EXTRAS = !PAGE;
 const PATCHES = {
   'js/engine.js': Extras.patchEngine,
   'js/app.js': Extras.patchApp,
   'js/shop.js': Extras.patchShop,
   'js/achievements.js': Extras.patchAchievements,
-  'api/_lib.js': Extras.patchServerLib,
+  'js/store.js': Extras.patchStore,
+  ...Extras.patchServer,
 };
 let data = null;
 if (EXTRAS) {
   const t0 = Date.now();
-  data = Extras.buildData(Extras.patchEngine(read('js/engine.js')), JSON.parse(read('data/badge-meta.json')));
-  console.log(`Badges en plus : ${data.extra.map(b => `${b.id} ${b.score}`).join(', ')}`);
+  data = await Extras.buildData(Extras.patchEngine(read('js/engine.js')), JSON.parse(read('data/badge-meta.json')), path.join(ROOT, 'tools/.cache'));
+  console.log(`${data.badgeCount} badges${data.cached ? ' (cache)' : ''}, dont en plus : ${data.extra.map(b => `${b.id} ${b.score}`).join(', ')}`);
   console.log(`Cotes par rareté : ${Object.entries(data.tierOdds).map(([t, p]) => `${t} ${(p * 100).toFixed(3)}%`).join(', ')} (${((Date.now() - t0) / 1000).toFixed(1)} s)`);
 }
 // Un fichier du site tel que la version autonome le reçoit.
@@ -302,7 +304,7 @@ const account = `
 const levels = `
 (function () {
   'use strict';
-  const MULT = { trash: 1, common: 1, uncommon: 2, rare: 3, epic: 4, anomaly: 5, mythic: 5${EXTRAS ? ', cosmic: 5' : ''} };
+  const MULT = { trash: 1, common: 1, uncommon: 2, rare: 3, epic: 4, anomaly: 5, mythic: 5${EXTRAS ? Extras.NEW_TIERS.map(t => `, ${t}: 5`).join('') : ''} };
   const need = level => 10 + 5 * (level - 1); // points pour passer du niveau "level" au suivant
   const engine = RNGEngine.createEngine(window.BADGE_META, window.SCORE_PERCENTILES);
   const tierOf = r => engine.cardTier(r[1]);
@@ -408,7 +410,7 @@ const levelsCSS = `
   border: 1px solid var(--outline); border-radius: 8px; background: var(--surface); color: var(--prose); cursor: pointer; font: inherit; }
 .lv-chip:hover { border-color: var(--outline-strong); }
 .lv-chip:focus-visible { outline: 2px solid var(--chart-accent); outline-offset: 2px; }
-.lv-num { font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; font-variant-numeric: tabular-nums; line-height: 1; }
+.lv-num { white-space: nowrap; font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; font-variant-numeric: tabular-nums; line-height: 1; }
 .lv-bar { display: block; width: 3.2rem; height: 4px; border-radius: 2px; background: var(--surface-raised); overflow: hidden; }
 .lv-bar i { display: block; height: 100%; background: var(--chart-accent); border-radius: 2px; transition: width .5s ease; }
 .lv-chip.bump { animation: lv-bump .5s ease; }
@@ -424,11 +426,12 @@ const levelsCSS = `
 .lv-pop b { font-size: .9rem; font-weight: 800; color: var(--tier-common); }
 .lv-pop span { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--prose-2); }
 .lv-pop strong { font-size: .95rem; font-weight: 900; letter-spacing: .04em; color: var(--chart-accent); }
-${['trash','common','uncommon','rare','epic','anomaly','mythic'].concat(EXTRAS ? ['cosmic'] : []).map(t => `.lv-pop[data-tier="${t}"] b { color: var(--tier-${t}); }`).join('\n')}
+${['trash','common','uncommon','rare','epic','anomaly','mythic'].concat(EXTRAS ? Extras.NEW_TIERS : []).map(t => `.lv-pop[data-tier="${t}"] b { color: var(--tier-${t}); }`).join('\n')}
 .lv-pop.up { border-color: var(--chart-accent); }
 .lv-pop.show { animation: lv-in .35s cubic-bezier(.34,1.56,.64,1) both; }
 @keyframes lv-in { from { opacity: 0; transform: translateY(-8px) scale(.95); } }
 .lv-pop[hidden], .lv-panel[hidden] { display: none; }
+@media (max-width: 480px) { .lv-bar { display: none !important; } .lv-chip { margin-right: .15rem; } .player-btn { padding: 0 .5rem; } .player-btn span { max-width: 4.5rem; } }
 @media (max-width: 720px) { .lv-bar { width: 2.4rem; } .lv-chip { padding: 0 .45rem; margin-right: .25rem; } }
 @media (prefers-reduced-motion: reduce) { .lv-chip.bump, .lv-pop.show { animation: none; } .lv-bar i { transition: none; } }
 `;
@@ -462,6 +465,7 @@ html = html
   .replace(/<\/?head>\s*/gi, '')
   .replace(/<\/?body>\s*/gi, '')
   .replace(/<meta charset[^>]*>\s*/i, '')
+  .replace('roll a number from 0 to 1,000,000', () => EXTRAS ? 'roll a number from 0 to 9,999,999' : 'roll a number from 0 to 1,000,000')
   .replace(/<meta name="viewport"[^>]*>\s*/i, '')
   .replace(/<link rel="canonical"[^>]*>\s*/i, '')
   // Redirection vers rng-infinite.com : sans objet ici.
