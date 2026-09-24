@@ -1,5 +1,6 @@
 // Version autonome du jeu en une seule page HTML : le site + les fonctions /api qui tournent dans le navigateur.
-//   node tools/artifact.mjs [sortie.html]   (par défaut : dist/rng-infinite.html)
+//   node tools/artifact.mjs [sortie.html]   (par défaut : dist/rng-infinite.html) : pour un artifact claude.ai
+//   node tools/artifact.mjs --page          → standalone/index.html, page web complète (rngdle-infinite.vercel.app)
 // Tout est inliné (CSS, JS, émoticônes en data:). Les appels /api/* sont interceptés et servis par les vraies
 // fonctions de api/, branchées sur le faux Redis de tools/fake-redis.mjs, sauvegardé dans le localStorage.
 // Tirages, pièces, boutique, succès et duels contre les bots marchent ; le classement ne contient que ce navigateur.
@@ -8,7 +9,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const OUT = path.resolve(process.argv[2] || path.join(ROOT, 'dist/rng-infinite.html'));
+const args = process.argv.slice(2);
+// --page : document HTML complet, à servir tel quel ; sinon le contenu seul, que l'artifact enveloppe lui-même.
+const PAGE = args.includes('--page');
+const OUT = path.resolve(args.find(a => !a.startsWith('--')) || path.join(ROOT, PAGE ? 'standalone/index.html' : 'dist/rng-infinite.html'));
 const read = rel => fs.readFileSync(path.join(ROOT, rel), 'utf8');
 // Un "</script>" dans du JS inliné fermerait la balise : "<\/script>" est équivalent en JS.
 const safe = js => js.replace(/<\/script/gi, '<\\/script');
@@ -160,6 +164,8 @@ ${modules}
 const account = `
 (function () {
   'use strict';
+  // Hors d'un artifact claude.ai (page servie seule), pas de compte : tout reste dans ce navigateur.
+  if (!window.claude || !window.claude.use) return;
   const KEYS = ['rnginf.v1', 'rnginf.server.v1']; // données du site (js/store.js) et base du serveur local
   const FLAG = 'rnginf.cloud.v1';                  // { savedAt } tant que ce navigateur est connecté
   const PART = 60000;                              // caractères par document (256 Kio max, même en UTF-8)
@@ -293,6 +299,19 @@ html = html
 // <title> en tête : seuls les premiers Ko sont lus pour nommer la page.
 const title = /<title>[^<]*<\/title>\s*/.exec(html)[0];
 html = title + html.replace(title, '');
+
+if (PAGE) {
+  html = `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+${html.replace(/(<\/title>\s*[\s\S]*?)(<header class="topbar">)/, '$1</head>\n<body>\n$2')}
+</body>
+</html>
+`;
+  if (!html.includes('</head>\n<body>')) throw new Error('--page : début du <body> introuvable');
+}
 
 fs.mkdirSync(path.dirname(OUT), { recursive: true });
 fs.writeFileSync(OUT, html);

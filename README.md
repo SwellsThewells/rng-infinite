@@ -49,6 +49,12 @@ Build a single self-contained HTML file (site + `/api` running in the browser, s
 node tools/artifact.mjs            # → dist/rng-infinite.html
 ```
 
+The same build as a complete web page lives in `standalone/` and is served at **rngdle-infinite.vercel.app** (a separate Vercel project with Root Directory `standalone`, no build step). Rebuild it after changing the game:
+
+```bash
+node tools/artifact.mjs --page     # → standalone/index.html
+```
+
 Regenerate the data after changing the engine:
 
 ```bash
