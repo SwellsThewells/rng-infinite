@@ -43,6 +43,20 @@ Static site, no dependencies:
 python3 -m http.server 8123
 ```
 
+Build a single self-contained HTML file (site + `/api` running in the browser, saved to localStorage; duels against bots only):
+
+```bash
+node tools/artifact.mjs            # → dist/rng-infinite.html
+```
+
+The artifact build also changes the game: rolls go from 0 to 9,999,999 (7 digits), three rarities sit above Mythic (**Cosmic** top 0.1%, **Celestial** top 0.01%, **Infinity** top 0.001%), and 62 extra badges are added, all defined in `tools/artifact-extras.mjs`. Every badge's XP is recomputed from its real frequency over the 10,000,000 numbers (the first build takes about 30 minutes on 4 cores; the result is cached in `tools/.cache/`). rng-infinite.com and the standalone page do not get these changes.
+
+The same build as a complete web page lives in `standalone/` and is served at **rngdle-infinite.vercel.app** (a separate Vercel project with Root Directory `standalone`, no build step). Rebuild it after changing the game:
+
+```bash
+node tools/artifact.mjs --page     # → standalone/index.html
+```
+
 Regenerate the data after changing the engine:
 
 ```bash

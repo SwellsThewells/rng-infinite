@@ -120,5 +120,5 @@ export function fakeRedis() {
     if (!COMMANDS[cmd]) throw new Error(`fake-redis : commande ${cmd} non gérée`);
     return { result: COMMANDS[cmd](...args) };
   });
-  return { db, zset, run };
+  return { db, zset, run, expires };
 }
