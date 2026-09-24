@@ -261,6 +261,142 @@ const account = `
 })();
 `;
 
+// ---- Niveaux : 1 point de niveau par tirage, multiplié selon la rareté de la carte (×5 au plus).
+// Calculés depuis l'historique (Store.rolls) : rien de plus à sauvegarder, et ils suivent la connexion Claude.
+const levels = `
+(function () {
+  'use strict';
+  const MULT = { trash: 1, common: 1, uncommon: 2, rare: 3, epic: 4, anomaly: 5, mythic: 5 };
+  const need = level => 10 + 5 * (level - 1); // points pour passer du niveau "level" au suivant
+  const engine = RNGEngine.createEngine(window.BADGE_META, window.SCORE_PERCENTILES);
+  const tierOf = r => engine.cardTier(r[1]);
+  const pointsOf = r => MULT[tierOf(r)] || 1;
+  const sum = rolls => rolls.reduce((s, r) => s + pointsOf(r), 0);
+  function levelOf(total) {
+    let level = 1, into = total;
+    while (into >= need(level)) { into -= need(level); level++; }
+    return { level, into, need: need(level) };
+  }
+
+  const chip = document.createElement('button');
+  chip.className = 'lv-chip';
+  chip.id = 'lv-chip';
+  chip.innerHTML = '<span class="lv-num"></span><span class="lv-bar"><i></i></span>';
+  const panel = document.createElement('div');
+  panel.className = 'lv-panel';
+  panel.hidden = true;
+  const pop = document.createElement('div');
+  pop.className = 'lv-pop';
+  pop.hidden = true;
+  const right = document.querySelector('.topbar-right');
+  right.insertBefore(chip, document.getElementById('player-btn'));
+  document.body.append(panel, pop);
+
+  let total = sum(Store.rolls), seen = Store.rolls.length;
+
+  function render() {
+    const s = levelOf(total);
+    chip.querySelector('.lv-num').textContent = 'Lv ' + s.level;
+    chip.querySelector('.lv-bar i').style.width = (100 * s.into / s.need).toFixed(1) + '%';
+    const label = 'Level ' + s.level + ': ' + s.into + ' / ' + s.need + ' level XP to level ' + (s.level + 1);
+    chip.title = label;
+    chip.setAttribute('aria-label', label);
+    panel.innerHTML = '<b>Level ' + s.level + '</b><span class="lv-sub">' + s.into + ' / ' + s.need + ' to level ' + (s.level + 1) +
+      ' · ' + total.toLocaleString('en-US') + ' level XP total</span>' +
+      '<span class="lv-sub">Every roll gives 1 level XP, multiplied by its rarity:</span><ul>' +
+      Object.entries(MULT).map(([t, m]) => '<li><span class="pill" data-tier="' + t + '">' + t + '</span><b>×' + m + '</b></li>').join('') +
+      '</ul>';
+    return s;
+  }
+
+  let popTimer = null;
+  function showGain(points, tier, before, after) {
+    const up = after.level > before.level;
+    pop.dataset.tier = tier;
+    pop.innerHTML = '<b>+' + points + ' level XP</b>' + (points > 1 ? '<span>' + tier + ' ×' + points + '</span>' : '') +
+      (up ? '<strong>Level up! Lv ' + after.level + '</strong>' : '');
+    pop.classList.toggle('up', up);
+    pop.hidden = false;
+    pop.classList.remove('show'); void pop.offsetWidth; pop.classList.add('show');
+    chip.classList.remove('bump'); void chip.offsetWidth; chip.classList.add('bump');
+    clearTimeout(popTimer);
+    popTimer = setTimeout(() => { pop.hidden = true; }, up ? 3200 : 1900);
+  }
+
+  // Le tirage est enregistré juste avant la révélation (body.locked) : on attend qu'elle commence puis se termine,
+  // pour ne rien dévoiler. Sans révélation dans la seconde et demie (tirage de duel), on l'affiche quand même.
+  let pending = null;
+  const revealing = () => document.body.classList.contains('locked');
+  function flush() {
+    if (!pending) return;
+    if (revealing()) { pending.sawReveal = true; return; }
+    if (!pending.sawReveal && Date.now() - pending.at < 1500) return;
+    const { points, tier, before } = pending;
+    pending = null;
+    showGain(points, tier, before, render());
+  }
+  new MutationObserver(flush).observe(document.body, { attributes: true, attributeFilter: ['class'] });
+
+  Store.onChange(() => {
+    const rolls = Store.rolls;
+    if (rolls.length === seen) return;
+    if (rolls.length < seen || rolls.length - seen > 3) { // historique vidé, importé ou synchronisé
+      total = sum(rolls); seen = rolls.length; pending = null; render();
+      return;
+    }
+    const before = pending ? pending.before : levelOf(total);
+    const added = rolls.slice(seen);
+    const points = sum(added) + (pending ? pending.points : 0);
+    total += sum(added);
+    seen = rolls.length;
+    pending = { points, tier: tierOf(added[added.length - 1]), before, at: Date.now(), sawReveal: revealing() };
+    setTimeout(flush, 1600);
+  });
+
+  chip.addEventListener('click', e => {
+    e.stopPropagation();
+    panel.hidden = !panel.hidden;
+    if (!panel.hidden) {
+      const r = chip.getBoundingClientRect();
+      panel.style.top = (r.bottom + 8) + 'px';
+      panel.style.right = Math.max(16, innerWidth - r.right) + 'px';
+    }
+  });
+  document.addEventListener('click', e => { if (!panel.hidden && !panel.contains(e.target)) panel.hidden = true; });
+  render();
+})();
+`;
+
+const levelsCSS = `
+.lv-chip { display: inline-flex; flex-direction: column; justify-content: center; gap: 3px; height: 2rem; padding: 0 .6rem; margin-right: .4rem;
+  border: 1px solid var(--outline); border-radius: 8px; background: var(--surface); color: var(--prose); cursor: pointer; font: inherit; }
+.lv-chip:hover { border-color: var(--outline-strong); }
+.lv-chip:focus-visible { outline: 2px solid var(--chart-accent); outline-offset: 2px; }
+.lv-num { font-size: .72rem; font-weight: 800; letter-spacing: .06em; text-transform: uppercase; font-variant-numeric: tabular-nums; line-height: 1; }
+.lv-bar { display: block; width: 3.2rem; height: 4px; border-radius: 2px; background: var(--surface-raised); overflow: hidden; }
+.lv-bar i { display: block; height: 100%; background: var(--chart-accent); border-radius: 2px; transition: width .5s ease; }
+.lv-chip.bump { animation: lv-bump .5s ease; }
+@keyframes lv-bump { 40% { transform: scale(1.12); } }
+.lv-panel { position: fixed; z-index: 60; width: min(17rem, calc(100vw - 32px)); padding: .8rem .9rem; display: flex; flex-direction: column; gap: .35rem;
+  background: var(--surface); color: var(--prose); border: 1px solid var(--outline); border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,.14); font-size: .8rem; }
+.lv-panel .lv-sub { color: var(--prose-2); }
+.lv-panel ul { list-style: none; margin: .2rem 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: .3rem .8rem; }
+.lv-panel li { display: flex; align-items: center; justify-content: space-between; gap: .4rem; }
+.lv-panel li b { font-variant-numeric: tabular-nums; }
+.lv-pop { position: fixed; z-index: 65; top: calc(env(safe-area-inset-top, 0px) + 3.6rem); right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: .15rem;
+  padding: .5rem .75rem; border-radius: 10px; background: var(--surface); border: 1px solid var(--outline); box-shadow: 0 6px 18px rgba(0,0,0,.12); pointer-events: none; }
+.lv-pop b { font-size: .9rem; font-weight: 800; color: var(--tier-common); }
+.lv-pop span { font-size: .7rem; text-transform: uppercase; letter-spacing: .06em; color: var(--prose-2); }
+.lv-pop strong { font-size: .95rem; font-weight: 900; letter-spacing: .04em; color: var(--chart-accent); }
+${['trash','common','uncommon','rare','epic','anomaly','mythic'].map(t => `.lv-pop[data-tier="${t}"] b { color: var(--tier-${t}); }`).join('\n')}
+.lv-pop.up { border-color: var(--chart-accent); }
+.lv-pop.show { animation: lv-in .35s cubic-bezier(.34,1.56,.64,1) both; }
+@keyframes lv-in { from { opacity: 0; transform: translateY(-8px) scale(.95); } }
+.lv-pop[hidden], .lv-panel[hidden] { display: none; }
+@media (max-width: 720px) { .lv-bar { width: 2.4rem; } .lv-chip { padding: 0 .45rem; margin-right: .25rem; } }
+@media (prefers-reduced-motion: reduce) { .lv-chip.bump, .lv-pop.show { animation: none; } .lv-bar i { transition: none; } }
+`;
+
 // ---- la page
 const emotes = Object.fromEntries(fs.readdirSync(path.join(ROOT, 'img/emotes')).filter(f => f.endsWith('.png'))
   .map(f => [f.slice(0, -4), `data:image/png;base64,${fs.readFileSync(path.join(ROOT, 'img/emotes', f)).toString('base64')}`]));
@@ -278,6 +414,7 @@ const inlineScript = rel => {
   let out = `<script>\n${safe(js)}\n</script>`;
   // Pas de connexion Google ici : le script de Google est bloqué et le compte vit dans ce navigateur.
   if (rel === 'js/config.js') out += `\n<script>window.RNG_CONFIG.googleClientId = '';</script>`;
+  if (rel === 'js/app.js') out += `\n<script>\n${safe(levels)}\n</script>`;
   if (rel === 'js/app.js') out = `<script>window.RNG_EMOTES = ${JSON.stringify(emotes)};</script>\n<script>\n${safe(backend)}\n</script>\n<script>\n${safe(account)}\n</script>\n` + out;
   return out;
 };
@@ -293,7 +430,7 @@ html = html
   .replace(/<link rel="canonical"[^>]*>\s*/i, '')
   // Redirection vers rng-infinite.com : sans objet ici.
   .replace(/<script>\s*\/\/ Adresse officielle[\s\S]*?<\/script>\s*/, '')
-  .replace(/<link rel="stylesheet" href="css\/style\.css[^"]*">/, () => `<style>\n${read('css/style.css')}\n</style>`)
+  .replace(/<link rel="stylesheet" href="css\/style\.css[^"]*">/, () => `<style>\n${read('css/style.css')}\n${levelsCSS}\n</style>`)
   .replace(/<script src="(js\/[\w-]+\.js)(?:\?v=\w+)?"><\/script>/g, (_, rel) => inlineScript(rel));
 
 // <title> en tête : seuls les premiers Ko sont lus pour nommer la page.
