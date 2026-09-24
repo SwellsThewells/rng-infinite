@@ -41,14 +41,26 @@ const backend = `
   const memory = fakeRedis();
   try {
     const saved = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
-    for (const [k, t, v] of saved) memory.db.set(k, t === 'm' ? new Map(v) : t === 's' ? new Set(v) : v);
+    // [clé, type, valeur, expiration] ; les délais (cooldown:…, react:…, verrous) gardent leur heure d'expiration.
+    // Les sauvegardes d'avant n'avaient pas d'expiration : ces clés-là restaient pour toujours et bloquaient les tirages.
+    const TRANSIENT = /^(cooldown|react):|:lock$/;
+    for (const [k, t, v, exp] of saved) {
+      if (exp ? exp <= Date.now() : TRANSIENT.test(k)) continue;
+      memory.db.set(k, t === 'm' ? new Map(v) : t === 's' ? new Set(v) : v);
+      if (exp) memory.expires.set(k, exp);
+    }
   } catch (e) {}
   let saveTimer = null;
   const save = () => {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       const out = [];
-      for (const [k, v] of memory.db) out.push([k, v instanceof Map ? 'm' : v instanceof Set ? 's' : 'v', v instanceof Map || v instanceof Set ? [...v] : v]);
+      for (const [k, v] of memory.db) {
+        const exp = memory.expires.get(k);
+        if (exp && exp <= Date.now()) continue;
+        const entry = [k, v instanceof Map ? 'm' : v instanceof Set ? 's' : 'v', v instanceof Map || v instanceof Set ? [...v] : v];
+        out.push(exp ? entry.concat(exp) : entry);
+      }
       try { localStorage.setItem(STORE_KEY, JSON.stringify(out)); } catch (e) {}
       if (window.RNG_ACCOUNT) window.RNG_ACCOUNT.changed();
     }, 300);
